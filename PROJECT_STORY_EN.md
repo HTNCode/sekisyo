@@ -1,7 +1,6 @@
 # Sekisyo CLI — Understand First, Then Review.
 
-> We do not reject AI-written code.
-> We reject code without an explanation.
+> We do not reject AI-written code. We reject code without an explanation.
 
 - Sekisyo CLI is not a tool for banning AI-generated code. It is a CLI built
   around Git's `pre-push` hook that guides developers to a point where they can
@@ -46,36 +45,32 @@
   usual, it performs the following steps before sending the code to the remote
   repository.
 
-1. **Understand the diff and focus attention**
-   Codex analyzes the changed areas and their scope of impact in the context of
-   the entire repository. At the same time, it creates an attention map that
-   classifies the diff as “mechanical,” “routine,” or “must-read,” along with
-   findings the developer should review before pushing.
+1. **Understand the diff and focus attention** Codex analyzes the changed areas
+   and their scope of impact in the context of the entire repository. At the
+   same time, it creates an attention map that classifies the diff as
+   “mechanical,” “routine,” or “must-read,” along with findings the developer
+   should review before pushing.
 
-2. **Perform an initial self-review**
-   For each Codex finding, the developer either chooses to “stop and fix it” or
-   explains why they are accepting it as an “intentional change.” Those reasons
-   are later preserved in the pull request body.
+2. **Perform an initial self-review** For each Codex finding, the developer
+   either chooses to “stop and fix it” or explains why they are accepting it as
+   an “intentional change.” Those reasons are later preserved in the pull
+   request body.
 
-3. **Question the developer**
-   GPT-5.6 generates questions that are difficult to answer without genuinely
-   understanding the changes.
+3. **Question the developer** GPT-5.6 generates questions that are difficult to
+   answer without genuinely understanding the changes.
 
-4. **Probe vague explanations**
-   An answer such as “It is probably fine” triggers follow-up questions about
-   the relevant code and design decisions.
+4. **Probe vague explanations** An answer such as “It is probably fine” triggers
+   follow-up questions about the relevant code and design decisions.
 
-5. **Push once the changes can be explained**
-   Once the answers become specific, the Q&A and its summary are temporarily
-   stored and bound to the HEAD SHA, base, destination ref, question policy, and
-   model, and the push proceeds.
+5. **Push once the changes can be explained** Once the answers become specific,
+   the Q&A and its summary are temporarily stored and bound to the HEAD SHA,
+   base, destination ref, question policy, and model, and the push proceeds.
 
-6. **Give reviewers the context they need to make decisions**
-   `sekisyo pr` creates or updates a managed block in the pull request body
-   containing the attention map, design decisions, acknowledged risks,
-   validation performed, unresolved issues, reasons from the initial
-   self-review, and passed Q&A. The local pass is deleted once this write
-   succeeds.
+6. **Give reviewers the context they need to make decisions** `sekisyo pr`
+   creates or updates a managed block in the pull request body containing the
+   attention map, design decisions, acknowledged risks, validation performed,
+   unresolved issues, reasons from the initial self-review, and passed Q&A. The
+   local pass is deleted once this write succeeds.
 
 The questions do not merely ask developers to summarize code. To that end,
 Sekisyo CLI defines and uses the following taxonomy of “questions that are
