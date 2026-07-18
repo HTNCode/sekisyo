@@ -3,7 +3,8 @@ export type GateErrorCode =
   | "follow_ups_exhausted"
   | "interactive_terminal_required"
   | "no_changes"
-  | "privacy_exclusion";
+  | "privacy_exclusion"
+  | "review_reason_exhausted";
 
 export class GateError extends Error {
   public constructor(
