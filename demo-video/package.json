@@ -1,0 +1,29 @@
+{
+  "name": "sekisyo-demo-video",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "narration:openai": "bun run scripts/generate-openai-narration.ts",
+    "render": "remotion render src/index.ts SekisyoDemo ../assets/demo/sekisyo-demo.mp4 --codec h264 --crf 18 --pixel-format yuv420p",
+    "render:preview": "remotion render src/index.ts SekisyoPreview ../assets/demo/sekisyo-demo-preview.mp4 --codec h264 --crf 20 --pixel-format yuv420p",
+    "still": "remotion still src/index.ts SekisyoPoster ../assets/demo/sekisyo-demo-poster.jpg",
+    "studio": "remotion studio src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "packageManager": "bun@1.3.14",
+  "dependencies": {
+    "@remotion/captions": "^4.0.488",
+    "@remotion/cli": "^4.0.488",
+    "@remotion/media": "^4.0.488",
+    "openai": "6.46.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "remotion": "^4.0.488"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "5.9.3"
+  }
+}

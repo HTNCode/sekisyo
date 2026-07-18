@@ -1,0 +1,19 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "pedantic": "off"
+  },
+  "env": {
+    "builtin": true,
+    "node": true,
+    "es2024": true
+  },
+  "plugins": ["eslint", "typescript"],
+  "rules": {
+    "eqeqeq": "error",
+    "no-console": "off",
+    "no-debugger": "error"
+  }
+}

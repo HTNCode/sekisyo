@@ -1,0 +1,59 @@
+{
+  "name": "sekisyo",
+  "version": "0.1.0",
+  "description": "A pre-push accountability gate that helps code authors explain AI-assisted changes before review.",
+  "type": "module",
+  "bin": {
+    "sekisyo": "./src/bin/sekisyo.ts"
+  },
+  "files": [
+    "assets/demo/sekisyo-demo-preview.gif",
+    "assets/sekisyo-cli-icon.jpg",
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "bun build ./src/bin/sekisyo.ts --target=bun --outdir=dist",
+    "compile": "bun build ./src/bin/sekisyo.ts --compile --outfile=dist/sekisyo",
+    "dev": "bun run ./src/bin/sekisyo.ts",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "oxlint src test",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "keywords": [
+    "ai",
+    "codex",
+    "developer-tools",
+    "git",
+    "openai",
+    "pre-push",
+    "review"
+  ],
+  "author": "HTNCode",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HTNCode/sekisyo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/HTNCode/sekisyo/issues"
+  },
+  "homepage": "https://github.com/HTNCode/sekisyo#readme",
+  "engines": {
+    "bun": ">=1.2.0"
+  },
+  "packageManager": "bun@1.3.14",
+  "dependencies": {
+    "openai": "^6.46.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.14",
+    "oxlint": "^1.73.0",
+    "prettier": "^3.9.5",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,72 @@
+[
+  {
+    "text": "AI-written code is welcome. Unexplained code is not.",
+    "startMs": 0,
+    "endMs": 8000,
+    "timestampMs": null,
+    "confidence": null
+  },
+  {
+    "text": "AI accelerates code generation—but reviewer attention does not scale.",
+    "startMs": 8000,
+    "endMs": 20000,
+    "timestampMs": null,
+    "confidence": null
+  },
+  {
+    "text": "Sekisyo moves accountability upstream, before code reaches review.",
+    "startMs": 20000,
+    "endMs": 29000,
+    "timestampMs": null,
+    "confidence": null
+  },
+  {
+    "text": "A normal git push triggers repository-aware analysis with Codex.",
+    "startMs": 29000,
+    "endMs": 44000,
+    "timestampMs": null,
+    "confidence": null
+  },
+  {
+    "text": "The author resolves machine-detectable findings first.",
+    "startMs": 44000,
+    "endMs": 55000,
+    "timestampMs": null,
+    "confidence": null
+  },
+  {
+    "text": "GPT-5.6 asks questions that require understanding. Vague answers trigger follow-up.",
+    "startMs": 55000,
+    "endMs": 75000,
+    "timestampMs": null,
+    "confidence": null
+  },
+  {
+    "text": "Only concrete, verifiable explanations pass the checkpoint.",
+    "startMs": 75000,
+    "endMs": 84000,
+    "timestampMs": null,
+    "confidence": null
+  },
+  {
+    "text": "Sekisyo writes the attention map and design decisions into the pull request.",
+    "startMs": 84000,
+    "endMs": 102000,
+    "timestampMs": null,
+    "confidence": null
+  },
+  {
+    "text": "No server. No database. The local pass is disposable; the PR record remains.",
+    "startMs": 102000,
+    "endMs": 113000,
+    "timestampMs": null,
+    "confidence": null
+  },
+  {
+    "text": "Worker-first: reviewer relief follows from stronger authors.",
+    "startMs": 113000,
+    "endMs": 123000,
+    "timestampMs": null,
+    "confidence": null
+  }
+]
