@@ -9,7 +9,7 @@ import {
   writeFile
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import {
   BunProcessRunner,
@@ -306,7 +306,7 @@ class FakeProcessRunner implements ProcessRunner {
       if (destinationIndex === -1 || repositoryPath === undefined) {
         throw new Error("Archive extraction destination was not provided.");
       }
-      await this.#repositorySeeder(repositoryPath);
+      await this.#repositorySeeder(resolve(spec.cwd, repositoryPath));
       return {
         exitCode: 0,
         stderr: "",
@@ -348,7 +348,7 @@ class RealGitFakeCodexRunner implements ProcessRunner {
       }
       if (spec.argv[0] === "tar") {
         this.stagingRepositoryExistedWhenExtracting = await pathExists(
-          join(spec.cwd, "..", "staging-repository")
+          join(spec.cwd, "staging-repository")
         );
       }
       return this.#gitRunner.run(spec, signal);
@@ -679,16 +679,32 @@ describe("CodexDiffAnalyzer", () => {
     expect(gitSpecs.flatMap((spec) => spec.argv)).not.toContain("checkout");
     expect(runner.specs.at(-2)?.argv[0]).toBe("tar");
     expect(runner.specs.at(-1)?.argv[0]).toBe("codex");
+    expect(runner.snapshot?.gitDirectoryExists).toBe(false);
+  });
+
+  test("Git BashのGNU tarへWindows drive付き絶対pathを渡さない", async () => {
+    const { analyzer, runner } = createAnalyzer();
+
+    await analyzer.analyze(validInput());
+
     const tarSpec = runner.specs.find((spec) => spec.argv[0] === "tar");
     expect(tarSpec?.argv).toEqual([
       "tar",
       "-k",
       "-xf",
-      expect.any(String),
+      "repository.tar",
       "-C",
-      expect.any(String)
+      "repository"
     ]);
-    expect(runner.snapshot?.gitDirectoryExists).toBe(false);
+    const gitSpecs = runner.specs.filter((spec) => spec.argv[0] === "git");
+    const archiveSpec = gitSpecs.find((spec) => spec.argv.includes("archive"));
+    const archiveOutput = archiveSpec?.argv.find((argument) =>
+      argument.startsWith("--output=")
+    );
+    expect(archiveOutput).toBeDefined();
+    expect(tarSpec?.cwd).toBe(
+      dirname(archiveOutput?.slice("--output=".length) ?? "")
+    );
   });
 
   test("SHA-256 HEAD用staging repositoryも同じobject formatで初期化する", async () => {

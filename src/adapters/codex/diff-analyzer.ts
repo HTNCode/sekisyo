@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { mkdir, readdir, rm, rmdir, unlink, writeFile } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import type {
@@ -572,8 +572,15 @@ async function runRepositoryPreparation(
   }
 
   await runPreparationProcess(
-    ["tar", "-k", "-xf", workspace.archivePath, "-C", workspace.repositoryPath],
-    workspace.repositoryPath,
+    [
+      "tar",
+      "-k",
+      "-xf",
+      basename(workspace.archivePath),
+      "-C",
+      basename(workspace.repositoryPath)
+    ],
+    dirname(workspace.archivePath),
     createCodexEnvironment()
   );
 
