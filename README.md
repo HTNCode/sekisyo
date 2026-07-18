@@ -189,6 +189,15 @@ questions:
         failure: required
 ```
 
+You can create a repository-specific question taxonomy entirely in
+`.sekisyo.yml`; no Sekisyo source changes are required. Set each built-in
+category to `true`, `false`, or `required`, add domain-specific question types
+under `custom` with a unique `name` and concrete `prompt`, and use `paths` to
+strengthen built-in categories for matching files. For example, a frontend team
+can add accessibility guidance, while a billing path can require a failure
+behavior question. Keep `questions.count` at least as large as the number of
+built-in categories marked `required`.
+
 The four default categories avoid summary questions:
 
 1. **Boundary conditions** — what happens for empty, maximum, missing, or
