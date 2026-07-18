@@ -32,20 +32,50 @@ export const questionListWireSchema = z
   })
   .strict();
 
-export const answerJudgmentWireSchema = z
+export const answerJudgmentWireResponseSchema = z
   .object({
     passed: z.boolean(),
     feedback: z.string().min(1).max(2_000),
-    missingConcept: z.string().min(1).max(1_000).nullable(),
-    followUp: z.string().min(1).max(2_000).nullable()
+    missingConcept: z.string().trim().min(1).max(1_000).nullable(),
+    followUp: z.string().trim().min(1).max(2_000).nullable()
   })
   .strict();
 
-export const followUpQuestionWireSchema = z
-  .object({
-    followUp: questionWireSchema.nullable()
-  })
-  .strict();
+export const answerJudgmentWireSchema =
+  answerJudgmentWireResponseSchema.superRefine((judgment, context) => {
+    if (judgment.passed) {
+      if (judgment.missingConcept !== null) {
+        context.addIssue({
+          code: "custom",
+          message: "Passed judgments must not include a missing concept.",
+          path: ["missingConcept"]
+        });
+      }
+      if (judgment.followUp !== null) {
+        context.addIssue({
+          code: "custom",
+          message: "Passed judgments must not include a follow-up question.",
+          path: ["followUp"]
+        });
+      }
+      return;
+    }
+
+    if (judgment.missingConcept === null) {
+      context.addIssue({
+        code: "custom",
+        message: "Failed judgments must include a missing concept.",
+        path: ["missingConcept"]
+      });
+    }
+    if (judgment.followUp === null) {
+      context.addIssue({
+        code: "custom",
+        message: "Failed judgments must include a follow-up question.",
+        path: ["followUp"]
+      });
+    }
+  });
 
 export const qaSummaryWireSchema = z
   .object({

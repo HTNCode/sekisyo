@@ -1,5 +1,4 @@
 import { PROMPT_VERSION } from "../application/gate.ts";
-import { fingerprint } from "../domain/fingerprint.ts";
 import type { SessionRecord } from "../domain/session.ts";
 import type { GateTarget } from "../application/gate.ts";
 import type { SekisyoConfig } from "../config/schema.ts";
@@ -29,7 +28,6 @@ export function isCurrentSession(
 
 export async function runStatusCommand(cwd: string): Promise<number> {
   const { config, store, target } = await prepareGateContext(cwd);
-  const currentDiffDigest = fingerprint(target.diff);
   const sessions = (await store.list())
     .filter((session) => session.head === target.head)
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
@@ -45,7 +43,7 @@ export async function runStatusCommand(cwd: string): Promise<number> {
       session,
       config,
       target,
-      currentDiffDigest
+      target.diffDigest
     );
     const passed = session.attempts.filter((attempt) => attempt.passed).length;
     console.log(
@@ -67,7 +65,7 @@ export async function runStatusCommand(cwd: string): Promise<number> {
   }
   return sessions.some(
     (session) =>
-      isCurrentSession(session, config, target, currentDiffDigest) &&
+      isCurrentSession(session, config, target, target.diffDigest) &&
       (session.status === "passed" || session.status === "summarized")
   )
     ? 0

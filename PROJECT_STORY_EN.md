@@ -63,8 +63,10 @@
    follow-up questions about the relevant code and design decisions.
 
 5. **Push once the changes can be explained** Once the answers become specific,
-   the Q&A and its summary are temporarily stored and bound to the HEAD SHA,
-   base, destination ref, question policy, and model, and the push proceeds.
+   the passed state and Q&A are temporarily stored and bound to the HEAD SHA,
+   base, destination ref, question policy, and model, and the push proceeds. The
+   Q&A summary is not generated during push; `sekisyo pr` generates it only
+   after selecting an exact matching passed record.
 
 6. **Give reviewers the context they need to make decisions** `sekisyo pr`
    creates or updates a managed block in the pull request body containing the

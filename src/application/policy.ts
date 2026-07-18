@@ -24,6 +24,26 @@ export function matchesGlob(path: string, pattern: string): boolean {
   return new Bun.Glob(normalizedPattern).match(normalizedPath);
 }
 
+function normalizePrivacyGlobValue(value: string): string {
+  return value.replaceAll("\\", "/").toLowerCase();
+}
+
+export function createPrivacyPathMatcher(
+  patterns: readonly string[]
+): (path: string) => boolean {
+  const globs = patterns.map(
+    (pattern) => new Bun.Glob(normalizePrivacyGlobValue(pattern))
+  );
+  return (path) => {
+    const normalizedPath = normalizePrivacyGlobValue(path);
+    return globs.some((glob) => glob.match(normalizedPath));
+  };
+}
+
+export function matchesPrivacyGlob(path: string, pattern: string): boolean {
+  return createPrivacyPathMatcher([pattern])(path);
+}
+
 function changedPaths(analysis: DiffAnalysis): ReadonlySet<string> {
   return new Set([
     ...analysis.attention.map((item) => item.path),
@@ -75,7 +95,6 @@ export function excludedDiffPaths(
   changedFiles: readonly string[],
   patterns: readonly string[]
 ): readonly string[] {
-  return [...new Set(changedFiles)].filter((path) =>
-    patterns.some((pattern) => matchesGlob(path, pattern))
-  );
+  const matchesPrivacyPath = createPrivacyPathMatcher(patterns);
+  return [...new Set(changedFiles)].filter(matchesPrivacyPath);
 }

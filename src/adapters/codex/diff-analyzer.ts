@@ -1,12 +1,14 @@
 import { z } from "zod";
-import { readdir, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import type {
   DiffAnalysisInput,
   DiffAnalyzer
 } from "../../ports/diff-analyzer.ts";
 import type { ProcessRunner } from "../../ports/process-runner.ts";
+import { createPrivacyPathMatcher } from "../../application/policy.ts";
 import {
   diffAnalysisWireSchema,
   toDiffAnalysis
@@ -27,7 +29,11 @@ import {
 const DEFAULT_CODEX_TIMEOUT_MS = 180_000;
 const CODEX_EXECUTABLE = "codex";
 const EXACT_DIFF_FILE_NAME = ".sekisyo-exact-diff.patch";
+// info/attributes has highest precedence, so repository export policy cannot omit or rewrite tracked blobs.
+const EXACT_ARCHIVE_ATTRIBUTES =
+  "* -export-ignore -export-subst\n**/* -export-ignore -export-subst\n";
 const MAX_EXACT_DIFF_BYTES = 100_000_000;
+const MAX_PROCESS_CAPTURED_BYTES = 2 * 1_024 * 1_024;
 const CODEX_ENVIRONMENT_ALLOWLIST = new Set([
   "APPDATA",
   "CODEX_HOME",
@@ -240,7 +246,8 @@ function gitPreparationEnvironment(): Readonly<Record<string, string>> {
   return {
     ...createCodexEnvironment(),
     GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null",
-    GIT_CONFIG_NOSYSTEM: "1"
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_NO_REPLACE_OBJECTS: "1"
   };
 }
 
@@ -275,17 +282,10 @@ function isControlPlanePath(relativePath: string): boolean {
   );
 }
 
-function normalizeGlobValue(value: string): string {
-  const normalizedValue = value.replaceAll("\\", "/");
-  return process.platform === "win32"
-    ? normalizedValue.toLowerCase()
-    : normalizedValue;
-}
-
 async function sanitizeSnapshotDirectory(
   repositoryPath: string,
   directoryPath: string,
-  excludedGlobs: readonly Bun.Glob[]
+  matchesPrivacyPath: (path: string) => boolean
 ): Promise<void> {
   const entries = await readdir(directoryPath, { withFileTypes: true });
   for (const entry of entries) {
@@ -298,10 +298,7 @@ async function sanitizeSnapshotDirectory(
     }
 
     const shouldRemove =
-      isControlPlanePath(relativePath) ||
-      excludedGlobs.some((glob) =>
-        glob.match(normalizeGlobValue(relativePath))
-      );
+      isControlPlanePath(relativePath) || matchesPrivacyPath(relativePath);
     if (shouldRemove) {
       if (entry.isDirectory()) {
         await rm(absolutePath, { force: true, recursive: true });
@@ -315,8 +312,11 @@ async function sanitizeSnapshotDirectory(
       await sanitizeSnapshotDirectory(
         repositoryPath,
         absolutePath,
-        excludedGlobs
+        matchesPrivacyPath
       );
+      if ((await readdir(absolutePath)).length === 0) {
+        await rmdir(absolutePath);
+      }
     }
   }
 }
@@ -326,13 +326,11 @@ async function prepareSanitizedSnapshot(
   diff: string,
   excludedPaths: readonly string[]
 ): Promise<void> {
-  const excludedGlobs = excludedPaths.map(
-    (pattern) => new Bun.Glob(normalizeGlobValue(pattern))
-  );
+  const matchesPrivacyPath = createPrivacyPathMatcher(excludedPaths);
   await sanitizeSnapshotDirectory(
     repositoryPath,
     repositoryPath,
-    excludedGlobs
+    matchesPrivacyPath
   );
   const diffPath = resolve(repositoryPath, EXACT_DIFF_FILE_NAME);
   snapshotRelativePath(repositoryPath, diffPath);
@@ -343,53 +341,103 @@ async function prepareSanitizedSnapshot(
   });
 }
 
+function remainingTimeoutMs(deadlineMs: number): number {
+  const remainingMs = deadlineMs - Date.now();
+  if (remainingMs <= 0) {
+    throw new CodexAdapterError("timeout", { retryable: true });
+  }
+  return remainingMs;
+}
+
+async function usesCaseInsensitivePaths(
+  directoryPath: string
+): Promise<boolean> {
+  const lowercaseProbePath = resolve(
+    directoryPath,
+    ".sekisyo-case-sensitivity-probe"
+  );
+  const uppercaseProbePath = resolve(
+    directoryPath,
+    ".SEKISYO-CASE-SENSITIVITY-PROBE"
+  );
+  let uppercaseProbeCreated = false;
+
+  try {
+    await writeFile(lowercaseProbePath, "", { flag: "wx", mode: 0o600 });
+    try {
+      await writeFile(uppercaseProbePath, "", { flag: "wx", mode: 0o600 });
+      uppercaseProbeCreated = true;
+      return false;
+    } catch {
+      return true;
+    }
+  } finally {
+    await rm(lowercaseProbePath, { force: true });
+    if (uppercaseProbeCreated) {
+      await rm(uppercaseProbePath, { force: true });
+    }
+  }
+}
+
+function hasCaseInsensitiveTreeCollision(manifest: string): boolean {
+  if (Buffer.byteLength(manifest, "utf8") >= MAX_PROCESS_CAPTURED_BYTES) {
+    throw new CodexAdapterError("repository_preparation");
+  }
+  if (manifest.length > 0 && !manifest.endsWith("\0")) {
+    throw new CodexAdapterError("repository_preparation");
+  }
+
+  const canonicalPaths = new Map<string, string>();
+  for (const path of manifest.split("\0").slice(0, -1)) {
+    const segments = path.split("/");
+    if (
+      segments.length === 0 ||
+      segments.some((segment) => segment.length === 0)
+    ) {
+      throw new CodexAdapterError("repository_preparation");
+    }
+
+    let canonicalPath = "";
+    let originalPath = "";
+    for (const segment of segments) {
+      const canonicalSegment = segment.normalize("NFC").toLowerCase();
+      canonicalPath =
+        canonicalPath.length === 0
+          ? canonicalSegment
+          : `${canonicalPath}/${canonicalSegment}`;
+      originalPath =
+        originalPath.length === 0 ? segment : `${originalPath}/${segment}`;
+
+      const existingPath = canonicalPaths.get(canonicalPath);
+      if (existingPath !== undefined && existingPath !== originalPath) {
+        return true;
+      }
+      canonicalPaths.set(canonicalPath, originalPath);
+    }
+  }
+  return false;
+}
+
 async function runRepositoryPreparation(
   runner: ProcessRunner,
   input: DiffAnalysisInput,
   workspace: CodexTemporaryWorkspace,
-  timeoutMs: number,
+  deadlineMs: number,
   signal?: AbortSignal
 ): Promise<void> {
-  const commands = [
-    {
-      argv: [
-        "git",
-        "-c",
-        "init.templateDir=",
-        "clone",
-        "--no-local",
-        "--no-checkout",
-        "--quiet",
-        "--",
-        input.repositoryPath,
-        workspace.repositoryPath
-      ],
-      cwd: input.repositoryPath
-    },
-    {
-      argv: [
-        "git",
-        "-c",
-        "core.hooksPath=",
-        "-C",
-        workspace.repositoryPath,
-        "checkout",
-        "--detach",
-        "--force",
-        input.head
-      ],
-      cwd: workspace.repositoryPath
-    }
-  ] as const;
-
-  for (const command of commands) {
+  const runPreparationProcess = async (
+    argv: readonly string[],
+    cwd: string,
+    env: Readonly<Record<string, string>>
+  ): Promise<string> => {
+    const timeoutMs = remainingTimeoutMs(deadlineMs);
     let result;
     try {
       result = await runner.run(
         {
-          argv: command.argv,
-          cwd: command.cwd,
-          env: gitPreparationEnvironment(),
+          argv,
+          cwd,
+          env,
           timeoutMs
         },
         signal
@@ -408,9 +456,129 @@ async function runRepositoryPreparation(
         exitCode: result.exitCode
       });
     }
+    return result.stdout;
+  };
+
+  try {
+    await mkdir(workspace.stagingRepositoryPath, { mode: 0o700 });
+    await runPreparationProcess(
+      [
+        "git",
+        "-c",
+        "init.templateDir=",
+        "init",
+        "--quiet",
+        ...(input.head.length === 64 ? ["--object-format=sha256"] : [])
+      ],
+      workspace.stagingRepositoryPath,
+      gitPreparationEnvironment()
+    );
+    await mkdir(resolve(workspace.stagingRepositoryPath, ".git", "info"), {
+      mode: 0o700,
+      recursive: true
+    });
+    await writeFile(
+      resolve(workspace.stagingRepositoryPath, ".git", "info", "attributes"),
+      EXACT_ARCHIVE_ATTRIBUTES,
+      {
+        encoding: "utf8",
+        flag: "wx",
+        mode: 0o600
+      }
+    );
+  } catch (error) {
+    if (error instanceof CodexAdapterError) {
+      throw error;
+    }
+    throw new CodexAdapterError("repository_preparation");
+  }
+
+  await runPreparationProcess(
+    [
+      "git",
+      "-c",
+      "core.hooksPath=",
+      "-c",
+      "protocol.file.allow=always",
+      "fetch",
+      "--quiet",
+      "--depth=1",
+      "--no-tags",
+      "--no-recurse-submodules",
+      "--no-write-fetch-head",
+      "--",
+      pathToFileURL(resolve(input.repositoryPath)).href,
+      input.head
+    ],
+    workspace.stagingRepositoryPath,
+    gitPreparationEnvironment()
+  );
+
+  let caseInsensitivePaths: boolean;
+  try {
+    caseInsensitivePaths = await usesCaseInsensitivePaths(
+      resolve(workspace.stagingRepositoryPath, "..")
+    );
+  } catch {
+    throw new CodexAdapterError("repository_preparation");
+  }
+  if (caseInsensitivePaths) {
+    const manifest = await runPreparationProcess(
+      [
+        "git",
+        "-c",
+        "core.hooksPath=",
+        "ls-tree",
+        "-r",
+        "-z",
+        "--name-only",
+        input.head
+      ],
+      workspace.stagingRepositoryPath,
+      gitPreparationEnvironment()
+    );
+    if (hasCaseInsensitiveTreeCollision(manifest)) {
+      throw new CodexAdapterError("repository_preparation");
+    }
+  }
+
+  await runPreparationProcess(
+    [
+      "git",
+      "-c",
+      "core.hooksPath=",
+      "archive",
+      "--format=tar",
+      `--output=${workspace.archivePath}`,
+      input.head
+    ],
+    workspace.stagingRepositoryPath,
+    gitPreparationEnvironment()
+  );
+
+  try {
+    await rm(workspace.stagingRepositoryPath, {
+      force: true,
+      recursive: true
+    });
+  } catch {
+    throw new CodexAdapterError("repository_preparation");
   }
 
   try {
+    await mkdir(workspace.repositoryPath, { mode: 0o700 });
+  } catch {
+    throw new CodexAdapterError("repository_preparation");
+  }
+
+  await runPreparationProcess(
+    ["tar", "-k", "-xf", workspace.archivePath, "-C", workspace.repositoryPath],
+    workspace.repositoryPath,
+    createCodexEnvironment()
+  );
+
+  try {
+    await unlink(workspace.archivePath);
     await prepareSanitizedSnapshot(
       workspace.repositoryPath,
       input.diff,
@@ -469,15 +637,7 @@ function assertAnalysisPrivacy(
     ...analysis.attention.map((item) => item.path),
     ...analysis.findings.map((finding) => finding.path)
   ];
-  if (
-    reportedPaths.some((path) =>
-      excludedPaths.some((pattern) =>
-        new Bun.Glob(normalizeGlobValue(pattern)).match(
-          normalizeGlobValue(path)
-        )
-      )
-    )
-  ) {
+  if (reportedPaths.some(createPrivacyPathMatcher(excludedPaths))) {
     throw new CodexAdapterError("invalid_output");
   }
 }
@@ -502,6 +662,7 @@ export class CodexDiffAnalyzer implements DiffAnalyzer {
     signal?: AbortSignal
   ): Promise<DiffAnalysis> {
     assertInput(input);
+    const deadlineMs = Date.now() + this.#options.timeoutMs;
 
     let workspace: CodexTemporaryWorkspace;
     try {
@@ -519,9 +680,10 @@ export class CodexDiffAnalyzer implements DiffAnalyzer {
         this.#processRunner,
         input,
         workspace,
-        this.#options.timeoutMs,
+        deadlineMs,
         signal
       );
+      const timeoutMs = remainingTimeoutMs(deadlineMs);
       let result;
       try {
         result = await this.#processRunner.run(
@@ -529,7 +691,7 @@ export class CodexDiffAnalyzer implements DiffAnalyzer {
             argv: buildArguments(input, workspace, this.#options),
             cwd: workspace.repositoryPath,
             env: createCodexEnvironment(),
-            timeoutMs: this.#options.timeoutMs
+            timeoutMs
           },
           signal
         );

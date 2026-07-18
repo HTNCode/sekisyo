@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import {
+  ensureSessionSummary,
   runGate,
   type GateDependencies,
   type GateTarget
@@ -57,11 +58,8 @@ const initialQuestion: Question = {
   rubric: ["空の場合の分岐を説明する"]
 };
 
-const followUpQuestion: Question = {
-  ...initialQuestion,
-  id: "q-1-follow-up",
-  prompt: "空の場合に通る分岐を行番号つきで説明してください"
-};
+const FOLLOW_UP_PROMPT = "空の場合に通る分岐を行番号つきで説明してください";
+const VALID_REVIEW_REASON = "呼び出し側で直列化し、競合リスクを回避します";
 
 const summary: QaSummary = {
   decisions: ["明示的に無効化する"],
@@ -134,9 +132,12 @@ class StaticAnalyzer implements DiffAnalyzer {
 }
 
 class ScriptedModel implements QaModel {
+  generateQuestionCalls = 0;
+  readonly judgedQuestionIds: string[] = [];
   readonly judgments: AnswerJudgment[] = [
     {
       feedback: "分岐の根拠が不足しています",
+      followUp: FOLLOW_UP_PROMPT,
       missingConcept: "空入力の分岐",
       passed: false
     },
@@ -148,19 +149,19 @@ class ScriptedModel implements QaModel {
   summarizeCalls = 0;
 
   async generateQuestions(): Promise<readonly Question[]> {
+    this.generateQuestionCalls += 1;
     return [initialQuestion];
   }
 
-  async judgeAnswer(): Promise<AnswerJudgment> {
+  async judgeAnswer(
+    input: Parameters<QaModel["judgeAnswer"]>[0]
+  ): Promise<AnswerJudgment> {
+    this.judgedQuestionIds.push(input.question.id);
     const judgment = this.judgments.shift();
     if (judgment === undefined) {
       throw new Error("No scripted judgment remains.");
     }
     return judgment;
-  }
-
-  async generateFollowUp(): Promise<Question> {
-    return followUpQuestion;
   }
 
   async summarize(): Promise<QaSummary> {
@@ -170,7 +171,6 @@ class ScriptedModel implements QaModel {
 }
 
 class ExhaustingModel implements QaModel {
-  followUpCalls = 0;
   judgmentCalls = 0;
 
   async generateQuestions(): Promise<readonly Question[]> {
@@ -181,14 +181,10 @@ class ExhaustingModel implements QaModel {
     this.judgmentCalls += 1;
     return {
       feedback: "まだ具体的な根拠が不足しています",
+      followUp: FOLLOW_UP_PROMPT,
       missingConcept: "実装上の分岐",
       passed: false
     };
-  }
-
-  async generateFollowUp(): Promise<Question> {
-    this.followUpCalls += 1;
-    return followUpQuestion;
   }
 
   async summarize(): Promise<QaSummary> {
@@ -197,18 +193,20 @@ class ExhaustingModel implements QaModel {
 }
 
 function target(): GateTarget {
+  const diff = [
+    "diff --git a/src/cache.ts b/src/cache.ts",
+    "--- a/src/cache.ts",
+    "+++ b/src/cache.ts",
+    "@@ -1 +1 @@",
+    "-old",
+    "+new"
+  ].join("\n");
   return {
     analysisTarget: { baseRef: "a".repeat(40), kind: "base" },
     base: "a".repeat(40),
     changedFiles: ["src/cache.ts"],
-    diff: [
-      "diff --git a/src/cache.ts b/src/cache.ts",
-      "--- a/src/cache.ts",
-      "+++ b/src/cache.ts",
-      "@@ -1 +1 @@",
-      "-old",
-      "+new"
-    ].join("\n"),
+    diff,
+    diffDigest: digestText(diff),
     head: "b".repeat(40),
     policyDigest: createPolicyDigest(DEFAULT_CONFIG),
     ref: `refs/heads/feature@${"c".repeat(40)}`,
@@ -264,11 +262,12 @@ describe("runGate", () => {
     expect([...records.values()][0]?.diffDigest).toBe(digestText(originalDiff));
   });
 
-  test("作成者が指摘理由を説明し、曖昧回答への追撃後に要約する", async () => {
+  test("定型的な指摘理由を再入力させ、追撃後にpassedで終了する", async () => {
     const store = new MemorySessionStore();
     const terminal = new ScriptedTerminal(
       [
-        "競合を呼び出し側で直列化しているため意図的です",
+        "問題ないです",
+        VALID_REVIEW_REASON,
         "空でも大丈夫です",
         "src/cache.ts:12のempty分岐で何も書き戻しません"
       ],
@@ -290,18 +289,34 @@ describe("runGate", () => {
       target()
     );
 
-    expect(session.status).toBe("summarized");
+    expect(session.status).toBe("passed");
     expect(session.reviewResolutions).toHaveLength(1);
+    expect(session.reviewResolutions[0]?.reason).toBe(VALID_REVIEW_REASON);
     expect(session.attempts.map((attempt) => attempt.passed)).toEqual([
       false,
       true
     ]);
-    expect(session.questions.map((question) => question.id)).toEqual([
-      "q-1",
-      "q-1-follow-up"
+    expect(session.questions).toEqual([
+      initialQuestion,
+      {
+        ...initialQuestion,
+        id: "follow-up-1",
+        prompt: FOLLOW_UP_PROMPT
+      }
     ]);
-    expect(session.summary).toEqual(summary);
-    expect(model.summarizeCalls).toBe(1);
+    expect(session.questions.map((question) => question.category)).toEqual([
+      "boundary",
+      "boundary"
+    ]);
+    expect(model.generateQuestionCalls).toBe(1);
+    expect(model.judgedQuestionIds).toEqual(["q-1", "follow-up-1"]);
+    expect(session.summary).toBeNull();
+    expect(model.summarizeCalls).toBe(0);
+    expect(
+      terminal.messages.some((message) =>
+        message.includes("定型的な回答では記録できません")
+      )
+    ).toBe(true);
   });
 
   test("同じHEAD・policy・diffの通過記録は非対話hookでも再利用する", async () => {
@@ -314,7 +329,7 @@ describe("runGate", () => {
         model: new ScriptedModel(),
         store,
         terminal: new ScriptedTerminal(
-          ["意図的な理由", "曖昧", "具体的な根拠"],
+          [VALID_REVIEW_REASON, "曖昧", "具体的な根拠"],
           ["intentional"]
         )
       },
@@ -336,9 +351,6 @@ describe("runGate", () => {
       async judgeAnswer() {
         throw new Error("再判定してはいけません");
       },
-      async generateFollowUp() {
-        throw new Error("再生成してはいけません");
-      },
       async summarize() {
         throw new Error("再要約してはいけません");
       }
@@ -355,34 +367,45 @@ describe("runGate", () => {
     );
 
     expect(reused.fingerprint).toBe(first.fingerprint);
-    expect(reused.status).toBe("summarized");
+    expect(reused.status).toBe("passed");
     expect(firstAnalyzer.calls).toBe(1);
   });
 
-  test("要約失敗で残ったpassed記録は再試問せず要約だけ再試行する", async () => {
+  test("passed記録はPR用の明示的な要約処理でのみsummarizedへ進む", async () => {
     const store = new MemorySessionStore();
     const firstModel = new ScriptedModel();
+    const passed = await runGate(
+      {
+        analyzer: new StaticAnalyzer(),
+        clock: () => "2026-07-18T12:00:00.000Z",
+        model: firstModel,
+        store,
+        terminal: new ScriptedTerminal(
+          [VALID_REVIEW_REASON, "曖昧", "具体的な根拠"],
+          ["intentional"]
+        )
+      },
+      {
+        ...DEFAULT_CONFIG,
+        questions: { ...DEFAULT_CONFIG.questions, count: 1 }
+      },
+      target()
+    );
+
+    expect(passed.status).toBe("passed");
+    expect(firstModel.summarizeCalls).toBe(0);
     firstModel.summarize = async () => {
       throw new Error("summary unavailable");
     };
 
     await expect(
-      runGate(
+      ensureSessionSummary(
         {
-          analyzer: new StaticAnalyzer(),
           clock: () => "2026-07-18T12:00:00.000Z",
           model: firstModel,
-          store,
-          terminal: new ScriptedTerminal(
-            ["意図的な理由", "曖昧", "具体的な根拠"],
-            ["intentional"]
-          )
+          store
         },
-        {
-          ...DEFAULT_CONFIG,
-          questions: { ...DEFAULT_CONFIG.questions, count: 1 }
-        },
-        target()
+        passed
       )
     ).rejects.toThrow("summary unavailable");
     expect([...store.records.values()][0]?.status).toBe("passed");
@@ -395,27 +418,18 @@ describe("runGate", () => {
       async judgeAnswer() {
         throw new Error("回答を再判定してはいけません");
       },
-      async generateFollowUp() {
-        throw new Error("追撃質問を再生成してはいけません");
-      },
       async summarize() {
         summarizeCalls += 1;
         return summary;
       }
     };
-    const analyzer: DiffAnalyzer = {
-      async analyze() {
-        throw new Error("差分を再分析してはいけません");
-      }
-    };
 
-    const recovered = await runGate(
-      { analyzer, model: recoveryModel, store },
+    const recovered = await ensureSessionSummary(
       {
-        ...DEFAULT_CONFIG,
-        questions: { ...DEFAULT_CONFIG.questions, count: 1 }
+        model: recoveryModel,
+        store
       },
-      target()
+      passed
     );
 
     expect(recovered.status).toBe("summarized");
@@ -432,7 +446,7 @@ describe("runGate", () => {
         model: new ScriptedModel(),
         store,
         terminal: new ScriptedTerminal(
-          ["意図的な理由", "曖昧", "具体的な根拠"],
+          [VALID_REVIEW_REASON, "曖昧", "具体的な根拠"],
           ["intentional"]
         )
       },
@@ -443,9 +457,11 @@ describe("runGate", () => {
       target()
     );
     const analyzer = new StaticAnalyzer();
+    const changedDiff = `${target().diff}\n# changed`;
     const changedTarget = {
       ...target(),
-      diff: `${target().diff}\n# changed`
+      diff: changedDiff,
+      diffDigest: digestText(changedDiff)
     };
 
     const second = await runGate(
@@ -455,7 +471,7 @@ describe("runGate", () => {
         model: new ScriptedModel(),
         store,
         terminal: new ScriptedTerminal(
-          ["別の意図的な理由", "曖昧", "具体的な根拠"],
+          ["上限10件、超過時は400で拒否します", "曖昧", "具体的な根拠"],
           ["intentional"]
         )
       },
@@ -482,7 +498,7 @@ describe("runGate", () => {
           model,
           store,
           terminal: new ScriptedTerminal(
-            ["意図的な理由", "回答1", "回答2"],
+            [VALID_REVIEW_REASON, "回答1", "回答2"],
             ["intentional"]
           )
         },
@@ -503,7 +519,6 @@ describe("runGate", () => {
     expect(failed?.attempts).toHaveLength(2);
     expect(failed?.questions).toHaveLength(2);
     expect(model.judgmentCalls).toBe(2);
-    expect(model.followUpCalls).toBe(1);
   });
 
   test("privacy対象パスは外部分析やセッション保存より前に拒否する", async () => {
@@ -553,5 +568,155 @@ describe("runGate", () => {
     ).rejects.toMatchObject({ code: "fix_requested" });
     expect(model.judgments).toHaveLength(2);
     expect([...store.records.values()][0]?.status).toBe("analyzed");
+  });
+
+  test("一次レビュー中に質問生成を開始し、修正選択時にabortする", async () => {
+    const store = new MemorySessionStore();
+    let generationStarted = false;
+    let generationAborted = false;
+    const model: QaModel = {
+      generateQuestions(_input, signal) {
+        generationStarted = true;
+        return new Promise<readonly Question[]>((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => {
+              generationAborted = true;
+              reject(new Error("question generation aborted"));
+            },
+            { once: true }
+          );
+        });
+      },
+      async judgeAnswer() {
+        throw new Error("回答判定へ進んではいけません");
+      },
+      async summarize() {
+        throw new Error("要約へ進んではいけません");
+      }
+    };
+    const terminal: Terminal = {
+      async confirm() {
+        return true;
+      },
+      error() {},
+      async prompt() {
+        return "";
+      },
+      async select<Value extends string>(): Promise<Value> {
+        expect(generationStarted).toBe(true);
+        return "fix" as Value;
+      },
+      write() {}
+    };
+
+    await expect(
+      runGate(
+        {
+          analyzer: new StaticAnalyzer(),
+          model,
+          store,
+          terminal
+        },
+        {
+          ...DEFAULT_CONFIG,
+          questions: { ...DEFAULT_CONFIG.questions, count: 1 }
+        },
+        target()
+      )
+    ).rejects.toMatchObject({ code: "fix_requested" });
+
+    expect(generationAborted).toBe(true);
+    expect([...store.records.values()][0]?.status).toBe("analyzed");
+  });
+
+  test("質問生成がAbortSignalを無視しても修正選択を即時返却する", async () => {
+    const store = new MemorySessionStore();
+    let rejectGeneration: ((reason?: unknown) => void) | undefined;
+    const model: QaModel = {
+      generateQuestions() {
+        return new Promise<readonly Question[]>((_resolve, reject) => {
+          rejectGeneration = reject;
+        });
+      },
+      async judgeAnswer() {
+        throw new Error("回答判定へ進んではいけません");
+      },
+      async summarize() {
+        throw new Error("要約へ進んではいけません");
+      }
+    };
+    const gatePromise = runGate(
+      {
+        analyzer: new StaticAnalyzer(),
+        model,
+        store,
+        terminal: new ScriptedTerminal([], ["fix"])
+      },
+      {
+        ...DEFAULT_CONFIG,
+        questions: { ...DEFAULT_CONFIG.questions, count: 1 }
+      },
+      target()
+    );
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    const timeoutPromise = new Promise<never>((_resolve, reject) => {
+      timeoutHandle = setTimeout(
+        () => reject(new Error("fix_requested timed out")),
+        250
+      );
+    });
+
+    try {
+      await expect(
+        Promise.race([gatePromise, timeoutPromise])
+      ).rejects.toMatchObject({ code: "fix_requested" });
+    } finally {
+      if (timeoutHandle !== undefined) {
+        clearTimeout(timeoutHandle);
+      }
+      rejectGeneration?.(new Error("delayed question generation failure"));
+    }
+
+    expect(rejectGeneration).toBeDefined();
+    expect([...store.records.values()][0]?.status).toBe("analyzed");
+  });
+
+  test("再利用しない指定では既存sessionを読み込まない", async () => {
+    const records = new Map<string, SessionRecord>();
+    const store: SessionStore = {
+      async list() {
+        return [...records.values()];
+      },
+      async load() {
+        throw new Error("sessionを読み込んではいけません");
+      },
+      async remove(fingerprint) {
+        records.delete(fingerprint);
+      },
+      async save(session) {
+        records.set(session.fingerprint, session);
+      }
+    };
+
+    const session = await runGate(
+      {
+        analyzer: new StaticAnalyzer(),
+        model: new ScriptedModel(),
+        store,
+        terminal: new ScriptedTerminal(
+          [VALID_REVIEW_REASON, "曖昧", "具体的な根拠"],
+          ["intentional"]
+        )
+      },
+      {
+        ...DEFAULT_CONFIG,
+        questions: { ...DEFAULT_CONFIG.questions, count: 1 }
+      },
+      target(),
+      { allowReuse: false }
+    );
+
+    expect(session.status).toBe("passed");
   });
 });

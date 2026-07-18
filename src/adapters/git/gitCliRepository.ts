@@ -16,7 +16,8 @@ import {
   isObjectId,
   isZeroObjectId,
   readChangedFiles,
-  readRepositoryDiff
+  readRepositoryDiff,
+  resolveDiffBase
 } from "./gitRepository.ts";
 
 const COMMAND_TIMEOUT_MS = 30_000;
@@ -53,6 +54,20 @@ function assertPrivatePath(path: string): void {
   ) {
     throw new Error("Git private path must stay inside the Git directory.");
   }
+}
+
+function assertRepositoryRoot(path: string): string {
+  const repoRoot = path.trim();
+  if (
+    repoRoot.length === 0 ||
+    !isAbsolute(repoRoot) ||
+    repoRoot.includes("\0") ||
+    repoRoot.includes("\r") ||
+    repoRoot.includes("\n")
+  ) {
+    throw new Error("Repository root must be an absolute path.");
+  }
+  return repoRoot;
 }
 
 export class GitCliRepository implements GitRepository {
@@ -277,32 +292,43 @@ export class GitCliRepository implements GitRepository {
     cwd: string,
     options: InspectRepositoryOptions = {}
   ): Promise<RepositoryState> {
-    const rootResult = await runCheckedCommand(
-      ["git", "rev-parse", "--show-toplevel"],
-      { cwd, timeoutMs: COMMAND_TIMEOUT_MS }
-    );
-    const repoRoot = rootResult.stdout.trim();
-    const remote = await this.#remoteName(repoRoot, options.remote);
-    const head = await this.#resolveRequiredCommit(
-      repoRoot,
-      options.head ?? "HEAD"
-    );
-    const ref =
+    const repoRoot =
+      options.repoRoot ??
+      (
+        await runCheckedCommand(["git", "rev-parse", "--show-toplevel"], {
+          cwd,
+          timeoutMs: COMMAND_TIMEOUT_MS
+        })
+      ).stdout.trim();
+    const safeRepoRoot = assertRepositoryRoot(repoRoot);
+    const [remote, head, ref] = await Promise.all([
+      this.#remoteName(safeRepoRoot, options.remote),
+      this.#resolveRequiredCommit(safeRepoRoot, options.head ?? "HEAD"),
       options.remoteRef === undefined
-        ? await this.#currentRef(repoRoot)
-        : assertReference(options.remoteRef, "Remote ref");
-    const refCheck = await this.#git(repoRoot, ["check-ref-format", ref]);
+        ? this.#currentRef(safeRepoRoot)
+        : Promise.resolve(assertReference(options.remoteRef, "Remote ref"))
+    ]);
+    const [refCheck, resolvedBase] = await Promise.all([
+      this.#git(safeRepoRoot, ["check-ref-format", ref]),
+      this.#resolveBase(safeRepoRoot, head, remote, options)
+    ]);
     if (refCheck.exitCode !== 0) {
       throw new Error(`Invalid remote destination ref: ${ref}`);
     }
-    const { base, rootCommit } = await this.#resolveBase(
-      repoRoot,
+    const range = {
+      base: resolvedBase.base,
       head,
-      remote,
-      options
-    );
+      repoRoot: safeRepoRoot,
+      rootCommit: resolvedBase.rootCommit
+    };
+    const diffBase = await resolveDiffBase(range);
 
-    return { repoRoot, base, head, remote, ref, rootCommit };
+    return {
+      ...range,
+      diffBase,
+      remote,
+      ref
+    };
   }
 
   public readDiff(target: RepositoryDiffTarget): Promise<string> {
@@ -313,15 +339,20 @@ export class GitCliRepository implements GitRepository {
     return readChangedFiles(target);
   }
 
-  public async gitPath(path: string): Promise<string> {
+  public async gitPath(path: string, repoRoot?: string): Promise<string> {
     assertPrivatePath(path);
-    const root = await runCheckedCommand(
-      ["git", "rev-parse", "--show-toplevel"],
-      { cwd: this.#cwd, timeoutMs: COMMAND_TIMEOUT_MS }
-    );
+    const root =
+      repoRoot === undefined
+        ? (
+            await runCheckedCommand(["git", "rev-parse", "--show-toplevel"], {
+              cwd: this.#cwd,
+              timeoutMs: COMMAND_TIMEOUT_MS
+            })
+          ).stdout.trim()
+        : assertRepositoryRoot(repoRoot);
     const result = await runCheckedCommand(
       ["git", "rev-parse", "--path-format=absolute", "--git-path", path],
-      { cwd: root.stdout.trim(), timeoutMs: COMMAND_TIMEOUT_MS }
+      { cwd: root, timeoutMs: COMMAND_TIMEOUT_MS }
     );
     return result.stdout.trim();
   }
