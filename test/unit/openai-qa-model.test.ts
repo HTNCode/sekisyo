@@ -16,28 +16,38 @@ import type {
 } from "../../src/adapters/openai/responses-client.ts";
 
 interface FakeResponseOptions {
+  readonly candidateFactory?: () => unknown;
   readonly failed?: boolean;
   readonly refused?: boolean;
   readonly status?: ResponseStatus;
 }
 
 class FakeResponsesClient implements OpenAIResponsesClient {
+  readonly prompts: Array<{
+    readonly input: string;
+    readonly instructions: string;
+  }> = [];
   readonly requests: Array<{
     readonly model: string;
     readonly schemaName: string;
     readonly timeoutMs: number;
   }> = [];
-  readonly #candidate: unknown;
+  readonly #nextCandidate: () => unknown;
   readonly #options: FakeResponseOptions;
 
   constructor(candidate: unknown, options: FakeResponseOptions = {}) {
-    this.#candidate = candidate;
+    this.#nextCandidate = options.candidateFactory ?? (() => candidate);
     this.#options = options;
   }
 
   async parse<Schema extends z.ZodType>(
     request: StructuredResponseRequest<Schema>
   ): Promise<StructuredResponse<z.output<Schema>>> {
+    const candidate = this.#nextCandidate();
+    this.prompts.push({
+      input: request.prompt.input,
+      instructions: request.prompt.instructions
+    });
     this.requests.push({
       model: request.model,
       schemaName: request.schemaName,
@@ -46,8 +56,7 @@ class FakeResponsesClient implements OpenAIResponsesClient {
     return {
       failed: this.#options.failed ?? false,
       incompleteReason: null,
-      parsed:
-        this.#candidate === null ? null : request.schema.parse(this.#candidate),
+      parsed: candidate === null ? null : request.schema.parse(candidate),
       refused: this.#options.refused ?? false,
       status: this.#options.status
     };
@@ -198,6 +207,166 @@ describe("OpenAIQaModel", () => {
         categories: [{ name: "failure", required: false }]
       })
     ).rejects.toMatchObject({ code: "invalid_response" });
+  });
+
+  test("不合格判定と同じ応答で不足概念と追撃質問を返す", async () => {
+    const client = new FakeResponsesClient({
+      passed: false,
+      feedback: "具体的な境界条件が不足しています",
+      missingConcept: "認証失敗時の分岐",
+      followUp: "認証失敗時に通る分岐と返却値を説明してください"
+    });
+    const model = new OpenAIQaModel(client);
+
+    const result = await model.judgeAnswer({
+      answer: "失敗時も処理します",
+      question
+    });
+
+    expect(result).toEqual({
+      passed: false,
+      feedback: "具体的な境界条件が不足しています",
+      missingConcept: "認証失敗時の分岐",
+      followUp: "認証失敗時に通る分岐と返却値を説明してください"
+    });
+    expect(client.requests[0]?.schemaName).toBe("sekisyo_answer_judgment");
+    expect(client.requests).toHaveLength(1);
+  });
+
+  test("合格判定では不足概念と追撃質問を返さない", async () => {
+    const model = new OpenAIQaModel(
+      new FakeResponsesClient({
+        passed: true,
+        feedback: "具体的に説明できています",
+        missingConcept: null,
+        followUp: null
+      })
+    );
+
+    await expect(
+      model.judgeAnswer({
+        answer: "401分岐で処理を止め、呼び出し元へエラーを返します",
+        question
+      })
+    ).resolves.toEqual({
+      passed: true,
+      feedback: "具体的に説明できています"
+    });
+  });
+
+  test.each([
+    {
+      passed: false,
+      feedback: "不足しています",
+      missingConcept: null,
+      followUp: "分岐を説明してください"
+    },
+    {
+      passed: false,
+      feedback: "不足しています",
+      missingConcept: "失敗時の分岐",
+      followUp: null
+    },
+    {
+      passed: true,
+      feedback: "十分です",
+      missingConcept: "不要な不足概念",
+      followUp: null
+    },
+    {
+      passed: true,
+      feedback: "十分です",
+      missingConcept: null,
+      followUp: "不要な追撃"
+    }
+  ])("判定と追撃情報が矛盾する応答を拒否する", async (candidate) => {
+    const client = new FakeResponsesClient(candidate);
+    const model = new OpenAIQaModel(client);
+
+    await expect(
+      model.judgeAnswer({
+        answer: "回答",
+        question
+      })
+    ).rejects.toMatchObject({ code: "invalid_response" });
+    expect(client.requests).toHaveLength(2);
+  });
+
+  test("相関違反だけを同じ入力で一度再判定する", async () => {
+    const candidates = [
+      {
+        passed: false,
+        feedback: "不足しています",
+        missingConcept: null,
+        followUp: "分岐を説明してください"
+      },
+      {
+        passed: false,
+        feedback: "境界条件が不足しています",
+        missingConcept: "認証失敗時の分岐",
+        followUp: "認証失敗時に通る分岐を説明してください"
+      }
+    ];
+    const client = new FakeResponsesClient(null, {
+      candidateFactory: () => candidates.shift()
+    });
+    const model = new OpenAIQaModel(client);
+
+    await expect(
+      model.judgeAnswer({
+        answer: "失敗時も処理します",
+        question
+      })
+    ).resolves.toEqual({
+      passed: false,
+      feedback: "境界条件が不足しています",
+      missingConcept: "認証失敗時の分岐",
+      followUp: "認証失敗時に通る分岐を説明してください"
+    });
+    expect(client.requests).toHaveLength(2);
+    expect(client.prompts[1]).toEqual(client.prompts[0]);
+  });
+
+  test("形状不正な判定応答は意味的な再判定の対象にしない", async () => {
+    const client = new FakeResponsesClient({
+      passed: false,
+      feedback: "不足しています"
+    });
+    const model = new OpenAIQaModel(client);
+
+    await expect(
+      model.judgeAnswer({
+        answer: "回答",
+        question
+      })
+    ).rejects.toMatchObject({ code: "invalid_response" });
+    expect(client.requests).toHaveLength(1);
+  });
+
+  test.each([
+    {
+      passed: false,
+      feedback: "不足しています",
+      missingConcept: "   ",
+      followUp: "分岐を説明してください"
+    },
+    {
+      passed: false,
+      feedback: "不足しています",
+      missingConcept: "失敗時の分岐",
+      followUp: "   "
+    }
+  ])("空白だけの追撃情報を拒否する", async (candidate) => {
+    const client = new FakeResponsesClient(candidate);
+    const model = new OpenAIQaModel(client);
+
+    await expect(
+      model.judgeAnswer({
+        answer: "回答",
+        question
+      })
+    ).rejects.toMatchObject({ code: "invalid_response" });
+    expect(client.requests).toHaveLength(1);
   });
 });
 

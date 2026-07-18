@@ -1,10 +1,11 @@
 import { createPrPublisher } from "../adapters/github/ghCli.ts";
+import { createOpenAIQaModel } from "../adapters/openai/index.ts";
 import { resolveCommit, runGit } from "../adapters/git/gitRepository.ts";
-import { PROMPT_VERSION } from "../application/gate.ts";
+import { ensureSessionSummary, PROMPT_VERSION } from "../application/gate.ts";
 import { createPolicyDigest, loadSekisyoConfig } from "../config/index.ts";
 import { fingerprint } from "../domain/fingerprint.ts";
 import type { SessionRecord } from "../domain/session.ts";
-import type { GitRepository } from "../ports/git-repository.ts";
+import type { GitRepository, QaModel, SessionStore } from "../ports/index.ts";
 import { renderSekisyoPrBlock, upsertSekisyoBlock } from "../pr/marker.ts";
 import { createSessionStore } from "./runtime.ts";
 
@@ -80,7 +81,7 @@ export function latestPublishableSession(
   return sessions
     .filter(
       (session) =>
-        session.status === "summarized" &&
+        (session.status === "passed" || session.status === "summarized") &&
         session.base === binding.base &&
         session.diffDigest === binding.diffDigest &&
         session.head === binding.head &&
@@ -124,14 +125,18 @@ async function createPublishableBinding(
     readonly ref: string;
   }
 ): Promise<PublishableSessionBinding> {
-  const state = await repository.inspect(repoRoot, {
-    base: input.base,
-    head: input.head,
-    remoteRef: input.ref
-  });
-  const config = await loadSekisyoConfig(repoRoot);
+  const [state, config] = await Promise.all([
+    repository.inspect(repoRoot, {
+      base: input.base,
+      head: input.head,
+      remoteRef: input.ref,
+      repoRoot
+    }),
+    loadSekisyoConfig(repoRoot)
+  ]);
   const range = {
     base: state.base,
+    diffBase: state.diffBase,
     head: state.head,
     repoRoot: state.repoRoot,
     rootCommit: state.rootCommit
@@ -150,6 +155,32 @@ async function createPublishableBinding(
     ref: state.ref,
     remote: state.remote
   };
+}
+
+export async function ensurePublishableSessionSummary(
+  session: SessionRecord,
+  store: SessionStore,
+  createModel: (model: string) => QaModel = (model) =>
+    createOpenAIQaModel({ model })
+): Promise<SessionRecord> {
+  if (session.status === "summarized") {
+    return session;
+  }
+  if (session.status !== "passed") {
+    throw new Error("PRへ書き出せるのは通過済みの記録だけです。");
+  }
+  return ensureSessionSummary(
+    {
+      model: createModel(session.model),
+      store
+    },
+    session,
+    {
+      validateBeforeSave: (summarizedSession) => {
+        buildPrBlock(summarizedSession);
+      }
+    }
+  );
 }
 
 function buildPrBlock(session: SessionRecord): string {
@@ -212,8 +243,11 @@ export async function runPrCommand(
   options: PrOptions = {}
 ): Promise<number> {
   const { repoRoot, repository, store } = await createSessionStore(cwd);
-  const headOid = await resolveCommit(repoRoot, "HEAD");
-  const headBranch = await currentBranch(repoRoot);
+  const [headOid, headBranch, sessions] = await Promise.all([
+    resolveCommit(repoRoot, "HEAD"),
+    currentBranch(repoRoot),
+    store.list()
+  ]);
   if (headBranch.length === 0) {
     throw new Error("detached HEADではPRを作成できません。");
   }
@@ -233,13 +267,14 @@ export async function runPrCommand(
     head: headOid,
     ref: `refs/heads/${headBranch}`
   });
-  const session = latestPublishableSession(await store.list(), binding);
-  if (session === undefined) {
+  const selectedSession = latestPublishableSession(sessions, binding);
+  if (selectedSession === undefined) {
     throw new Error(
-      `現在のPR差分（base: ${baseBranch}）と完全に一致する要約済みの通行手形がありません。` +
+      `現在のPR差分（base: ${baseBranch}）と完全に一致する通過済みの通行手形がありません。` +
         ` \`sekisyo ask --base ${baseBranch}\` を実行してください。`
     );
   }
+  const session = await ensurePublishableSessionSummary(selectedSession, store);
   const rendered = buildPrBlock(session);
   let url: string;
   if (current === undefined) {

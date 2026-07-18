@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { isCurrentSession } from "../../src/commands/status.ts";
+import { PROMPT_VERSION } from "../../src/application/gate.ts";
 import { createPolicyDigest, DEFAULT_CONFIG } from "../../src/config/index.ts";
 import { fingerprint } from "../../src/domain/fingerprint.ts";
 import { createSessionRecord } from "../../src/domain/session.ts";
@@ -16,6 +17,7 @@ const target: GateTarget = {
   base: BASE_OID,
   changedFiles: ["src/example.ts"],
   diff: DIFF,
+  diffDigest: fingerprint(DIFF),
   head: HEAD_OID,
   policyDigest: createPolicyDigest(DEFAULT_CONFIG),
   ref: `refs/heads/feature@${NEW_REMOTE_OID}`,
@@ -29,7 +31,7 @@ const session = createSessionRecord(
     head: target.head,
     model: DEFAULT_CONFIG.model,
     policyDigest: target.policyDigest,
-    promptVersion: "sekisyo-prompts-v2",
+    promptVersion: PROMPT_VERSION,
     ref: `refs/heads/feature@${OLD_REMOTE_OID}`,
     remote: target.remote
   },

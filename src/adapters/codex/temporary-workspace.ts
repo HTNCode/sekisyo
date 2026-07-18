@@ -7,9 +7,11 @@ import { TemporaryOutputNotFoundError } from "./errors.ts";
 const MAX_OUTPUT_BYTES = 2 * 1_024 * 1_024;
 
 export interface CodexTemporaryWorkspace {
+  readonly archivePath: string;
   readonly outputPath: string;
   readonly repositoryPath: string;
   readonly schemaPath: string;
+  readonly stagingRepositoryPath: string;
   cleanup(): Promise<void>;
   readOutput(): Promise<string>;
 }
@@ -20,15 +22,19 @@ export interface CodexTemporaryWorkspaceFactory {
 
 class NodeCodexTemporaryWorkspace implements CodexTemporaryWorkspace {
   readonly #rootPath: string;
+  readonly archivePath: string;
   readonly outputPath: string;
   readonly repositoryPath: string;
   readonly schemaPath: string;
+  readonly stagingRepositoryPath: string;
 
   constructor(rootPath: string) {
     this.#rootPath = rootPath;
+    this.archivePath = join(rootPath, "repository.tar");
     this.schemaPath = join(rootPath, "output-schema.json");
     this.outputPath = join(rootPath, "analysis.json");
     this.repositoryPath = join(rootPath, "repository");
+    this.stagingRepositoryPath = join(rootPath, "staging-repository");
   }
 
   async cleanup(): Promise<void> {

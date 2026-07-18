@@ -11,8 +11,8 @@ const INSTRUCTIONS = `あなたは Sekisyo CLI の育成コーチです。
 「問題ない」「仕様どおり」だけの回答、質問の言い換え、根拠のない断言、コードに結び付かない一般論は不合格です。
 完全な用語一致は要求せず、技術的に同等な説明は認めてください。
 feedback は責める表現を避け、できている点と次に具体化すべき一点を簡潔に示してください。
-不足がある場合は missingConcept と、答えを明かさず理解を深掘りする followUp を返してください。
-十分な場合は missingConcept と followUp を null にしてください。
+不合格の場合は missingConcept と、答えを明かさず理解を深掘りする followUp を必ず返してください。
+合格の場合は missingConcept と followUp を必ず null にしてください。
 判定と説明は日本語で返してください。
 ${UNTRUSTED_DATA_INSTRUCTION}`;
 

@@ -3,21 +3,19 @@ import type { z } from "zod";
 
 import {
   buildAnswerJudgmentPrompt,
-  buildFollowUpPrompt,
   buildQaSummaryPrompt,
   buildQuestionGenerationPrompt,
   type ModelPrompt
 } from "../../prompts/index.ts";
 import type {
   AnswerJudgmentInput,
-  FollowUpGenerationInput,
   QaModel,
   QaSummaryInput,
   QuestionGenerationInput
 } from "../../ports/qa-model.ts";
 import {
+  answerJudgmentWireResponseSchema,
   answerJudgmentWireSchema,
-  followUpQuestionWireSchema,
   qaSummaryWireSchema,
   questionListWireSchema,
   toAnswerJudgment,
@@ -43,6 +41,7 @@ export const DEFAULT_OPENAI_TIMEOUT_MS = 60_000;
 
 const DEFAULT_MAX_OUTPUT_TOKENS = 8_000;
 const MAX_QUESTION_COUNT = 20;
+const MAX_ANSWER_JUDGMENT_ATTEMPTS = 2;
 const BUILT_IN_CATEGORY_NAMES = new Set<string>(BUILT_IN_QUESTION_CATEGORIES);
 
 export interface OpenAIQaModelOptions {
@@ -224,30 +223,25 @@ export class OpenAIQaModel implements QaModel {
       throw new OpenAIAdapterError("invalid_input");
     }
 
-    const output = await this.#parse(
-      answerJudgmentWireSchema,
-      "sekisyo_answer_judgment",
-      buildAnswerJudgmentPrompt(input),
-      signal
-    );
-    return toAnswerJudgment(output);
-  }
-
-  async generateFollowUp(
-    input: FollowUpGenerationInput,
-    signal?: AbortSignal
-  ): Promise<Question | null> {
-    if (input.judgment.passed) {
-      return null;
+    const prompt = buildAnswerJudgmentPrompt(input);
+    for (
+      let attempt = 0;
+      attempt < MAX_ANSWER_JUDGMENT_ATTEMPTS;
+      attempt += 1
+    ) {
+      const output = await this.#parse(
+        answerJudgmentWireResponseSchema,
+        "sekisyo_answer_judgment",
+        prompt,
+        signal
+      );
+      const correlated = answerJudgmentWireSchema.safeParse(output);
+      if (correlated.success) {
+        return toAnswerJudgment(correlated.data);
+      }
     }
 
-    const output = await this.#parse(
-      followUpQuestionWireSchema,
-      "sekisyo_follow_up",
-      buildFollowUpPrompt(input),
-      signal
-    );
-    return output.followUp === null ? null : toQuestion(output.followUp);
+    throw new OpenAIAdapterError("invalid_response");
   }
 
   async summarize(

@@ -4,6 +4,8 @@
 
 # Sekisyo CLI
 
+> **⚠️ 本ソフトウェアは試験段階のプレビュー版です。**
+
 > We do not reject AI-written code. We reject unexplained code.
 
 Sekisyo is a worker-first, pre-push accountability gate for AI-assisted
@@ -51,7 +53,8 @@ git push
    └─ a disposable pass record is stored under Git's private directory
 ```
 
-`sekisyo pr` turns that disposable record into:
+`git push` does not generate a PR summary. After an exact matching passed record
+has been selected, `sekisyo pr` asks GPT-5.6 to turn it into:
 
 - design decisions;
 - risks and edge cases;
@@ -60,16 +63,19 @@ git push
   changes;
 - the author's Q&A.
 
-Only the PR body is permanent. Local pass records are disposable.
+The generated summary is first saved as a summarized local record. Sekisyo then
+creates or updates the PR body and deletes the local record only after that
+write succeeds. An already summarized record is reused on retry without another
+summary call. Only the PR body is permanent; local records are disposable.
 
 ## How Sekisyo uses Codex and GPT-5.6
 
 Sekisyo gives Codex and GPT-5.6 different responsibilities:
 
-| Technology                               | How Sekisyo uses it                                                                                                                                                                                                                                              |
-| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Codex CLI**                            | Runs headlessly at the pre-push gate to analyze the committed diff together with repository context. It returns structured findings, risks, and an attention map that classifies changed areas as mechanical, routine, or must-read.                             |
-| **GPT-5.6 via the OpenAI Responses API** | Uses the structured Codex analysis and the repository's question taxonomy to generate the oral examination, judge whether each answer is specific and verifiable, ask a focused follow-up when an answer is vague, and summarize the passed Q&A for the PR body. |
+| Technology                               | How Sekisyo uses it                                                                                                                                                                                                                                                                                                            |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Codex CLI**                            | Runs headlessly at the pre-push gate to analyze the committed diff together with repository context. It returns structured findings, risks, and an attention map that classifies changed areas as mechanical, routine, or must-read.                                                                                           |
+| **GPT-5.6 via the OpenAI Responses API** | Uses the structured Codex analysis and the repository's question taxonomy to generate the oral examination, judge whether each answer is specific and verifiable, and ask a focused follow-up when an answer is vague. Only `sekisyo pr`, after selecting an exact matching passed record, summarizes the Q&A for the PR body. |
 
 Codex answers **“what changed, where should attention go, and what could go
 wrong?”** GPT-5.6 then asks **“can the author explain those decisions and
@@ -110,6 +116,7 @@ layer: the pre-push hook works without it. The safe wrapper routes only
 
 - Bun 1.2 or newer;
 - Git;
+- a standard `tar` executable available on `PATH`;
 - [Codex CLI](https://developers.openai.com/codex/cli/) installed and
   authenticated;
 - an `OPENAI_API_KEY` available to the Sekisyo process for GPT-5.6;
@@ -213,9 +220,12 @@ The four default categories avoid summary questions:
 
 - API keys and raw diffs are never written to pass records or PR bodies.
 - A diff touching a `privacy.exclude` path is stopped before its contents are
-  read. Codex receives an isolated snapshot with Git metadata, symlinks,
-  agent-control files, and excluded paths removed; the exact bounded diff is
-  supplied separately as data.
+  read. Codex receives only the exact HEAD tree—without repository history—in an
+  isolated snapshot with Git metadata, symlinks, agent-control files, and
+  excluded paths removed; the exact bounded diff is supplied separately as data.
+  Snapshot preparation fetches only the requested commit at depth 1 and
+  neutralizes `export-ignore` and `export-subst`, so tracked files are neither
+  omitted nor rewritten by archive policy.
 - Child processes are launched with argument arrays, never a shell string.
 - Codex runs read-only and ephemerally.
 - The OpenAI key is not forwarded to the Codex child process.

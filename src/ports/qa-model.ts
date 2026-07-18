@@ -23,12 +23,6 @@ export interface AnswerJudgmentInput {
   readonly answer: string;
 }
 
-export interface FollowUpGenerationInput {
-  readonly question: Question;
-  readonly answer: string;
-  readonly judgment: AnswerJudgment;
-}
-
 export interface QaSummaryInput {
   readonly analysis: DiffAnalysis;
   readonly exchanges: readonly QaExchange[];
@@ -43,9 +37,5 @@ export interface QaModel {
     input: AnswerJudgmentInput,
     signal?: AbortSignal
   ): Promise<AnswerJudgment>;
-  generateFollowUp(
-    input: FollowUpGenerationInput,
-    signal?: AbortSignal
-  ): Promise<Question | null>;
   summarize(input: QaSummaryInput, signal?: AbortSignal): Promise<QaSummary>;
 }

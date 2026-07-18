@@ -1,5 +1,4 @@
 import type { SekisyoConfig } from "../config/schema.ts";
-import { fingerprint } from "../domain/fingerprint.ts";
 import type {
   AnswerJudgment,
   QaExchange,
@@ -21,14 +20,16 @@ import type {
 import { heading, muted, success, warning } from "../ui/format.ts";
 import { GateError } from "./errors.ts";
 import { excludedDiffPaths, resolveQuestionCategories } from "./policy.ts";
+import { validateReviewReason } from "./review-reason.ts";
 
-export const PROMPT_VERSION = "sekisyo-prompts-v2";
+export const PROMPT_VERSION = "sekisyo-prompts-v3";
 
 export interface GateTarget {
   readonly analysisTarget: ReviewTarget;
   readonly base: string;
   readonly changedFiles: readonly string[];
   readonly diff: string;
+  readonly diffDigest: string;
   readonly head: string;
   readonly policyDigest: string;
   readonly ref: string;
@@ -48,7 +49,30 @@ export interface RunGateOptions {
   readonly allowReuse?: boolean;
 }
 
-function now(dependencies: GateDependencies): string {
+type TransitionDependencies = Pick<GateDependencies, "clock" | "store">;
+
+export type SessionSummaryDependencies = Pick<
+  GateDependencies,
+  "clock" | "model" | "store"
+>;
+
+export interface EnsureSessionSummaryOptions {
+  readonly validateBeforeSave?: (
+    summarizedSession: SessionRecord
+  ) => Promise<void> | void;
+}
+
+type SettledResult<Value> =
+  | {
+      readonly status: "fulfilled";
+      readonly value: Value;
+    }
+  | {
+      readonly error: unknown;
+      readonly status: "rejected";
+    };
+
+function now(dependencies: Pick<GateDependencies, "clock">): string {
   return dependencies.clock?.() ?? new Date().toISOString();
 }
 
@@ -57,7 +81,7 @@ function isReusable(session: SessionRecord): boolean {
 }
 
 async function saveTransition(
-  dependencies: GateDependencies,
+  dependencies: TransitionDependencies,
   session: SessionRecord,
   status: Parameters<typeof transitionSession>[1],
   changes: Parameters<typeof transitionSession>[3] = {}
@@ -70,6 +94,13 @@ async function saveTransition(
   );
   await dependencies.store.save(updated);
   return updated;
+}
+
+function settle<Value>(promise: Promise<Value>): Promise<SettledResult<Value>> {
+  return promise.then(
+    (value) => ({ status: "fulfilled", value }),
+    (error: unknown) => ({ error, status: "rejected" })
+  );
 }
 
 function requireTerminal(dependencies: GateDependencies): Terminal {
@@ -129,14 +160,17 @@ async function resolveFindings(
       );
     }
 
-    let reason = "";
-    while (reason.length === 0) {
-      reason = await terminal.prompt(
-        "なぜこの挙動が意図的で、どのリスクを受け入れるのか説明してください"
+    let reason: string;
+    while (true) {
+      const candidate = await terminal.prompt(
+        "どの仕様・制約に基づく挙動で、想定リスクをどう扱うか説明してください"
       );
-      if (reason.length === 0) {
-        terminal.write(warning("具体的な理由を入力してください。"));
+      const validation = validateReviewReason(candidate);
+      if (validation.valid) {
+        reason = validation.value;
+        break;
       }
+      terminal.write(warning(validation.message));
     }
     current = {
       ...current,
@@ -187,6 +221,40 @@ function exchangesForSession(session: SessionRecord): readonly QaExchange[] {
   });
 }
 
+function assertJudgmentCorrelation(judgment: AnswerJudgment): void {
+  const includesMissingConcept = judgment.missingConcept !== undefined;
+  const includesFollowUp = judgment.followUp !== undefined;
+  if (
+    (judgment.passed && (includesMissingConcept || includesFollowUp)) ||
+    (!judgment.passed && (!includesMissingConcept || !includesFollowUp))
+  ) {
+    throw new Error(
+      "Answer judgment does not satisfy the passed/follow-up contract."
+    );
+  }
+}
+
+function createFollowUpQuestion(
+  existingQuestions: readonly Question[],
+  source: Question,
+  prompt: string
+): Question {
+  const existingIds = new Set(existingQuestions.map((question) => question.id));
+  let sequence = 1;
+  while (existingIds.has(`follow-up-${sequence}`)) {
+    sequence += 1;
+  }
+
+  return {
+    category: source.category,
+    evidence: [...source.evidence],
+    id: `follow-up-${sequence}`,
+    learningObjective: source.learningObjective,
+    prompt,
+    rubric: [...source.rubric]
+  };
+}
+
 async function askOneQuestion(
   dependencies: GateDependencies,
   session: SessionRecord,
@@ -213,6 +281,7 @@ async function askOneQuestion(
       answer,
       question
     });
+    assertJudgmentCorrelation(judgment);
     current = {
       ...current,
       attempts: [
@@ -247,26 +316,14 @@ async function askOneQuestion(
       );
     }
 
-    const followUp = await dependencies.model.generateFollowUp({
-      answer,
-      judgment,
-      question
-    });
-    if (followUp === null) {
-      const failed = await saveTransition(dependencies, current, "failed");
-      throw new GateError(
-        "follow_ups_exhausted",
-        `追撃質問を生成できませんでした（記録: ${failed.fingerprint.slice(0, 12)}）。`
-      );
+    if (judgment.followUp === undefined) {
+      throw new Error("Failed answer judgment did not include a follow-up.");
     }
-    if (current.questions.some((item) => item.id === followUp.id)) {
-      throw new Error(`追撃質問のIDが重複しています: ${followUp.id}`);
-    }
-    if (followUp.category !== question.category) {
-      throw new Error(
-        `追撃質問のカテゴリが元の質問と一致しません: ${question.category} -> ${followUp.category}`
-      );
-    }
+    const followUp = createFollowUpQuestion(
+      current.questions,
+      question,
+      judgment.followUp
+    );
     question = followUp;
     current = {
       ...current,
@@ -278,8 +335,9 @@ async function askOneQuestion(
 }
 
 async function summarizePassedSession(
-  dependencies: GateDependencies,
-  session: SessionRecord
+  dependencies: SessionSummaryDependencies,
+  session: SessionRecord,
+  options: EnsureSessionSummaryOptions
 ): Promise<SessionRecord> {
   if (session.status === "summarized") {
     return session;
@@ -291,14 +349,23 @@ async function summarizePassedSession(
     analysis: session.analysis,
     exchanges: exchangesForSession(session)
   });
-  return saveTransition(dependencies, session, "summarized", { summary });
+  const summarizedSession = transitionSession(
+    session,
+    "summarized",
+    now(dependencies),
+    { summary }
+  );
+  await options.validateBeforeSave?.(summarizedSession);
+  await dependencies.store.save(summarizedSession);
+  return summarizedSession;
 }
 
 export async function ensureSessionSummary(
-  dependencies: GateDependencies,
-  session: SessionRecord
+  dependencies: SessionSummaryDependencies,
+  session: SessionRecord,
+  options: EnsureSessionSummaryOptions = {}
 ): Promise<SessionRecord> {
-  return summarizePassedSession(dependencies, session);
+  return summarizePassedSession(dependencies, session, options);
 }
 
 export async function runGate(
@@ -325,7 +392,7 @@ export async function runGate(
   const created = createSessionRecord(
     {
       base: target.base,
-      diffDigest: fingerprint(exactDiff),
+      diffDigest: target.diffDigest,
       head: target.head,
       model: config.model,
       policyDigest: target.policyDigest,
@@ -335,16 +402,16 @@ export async function runGate(
     },
     now(dependencies)
   );
-  const existing = await dependencies.store.load(created.fingerprint);
+  const existing =
+    options.allowReuse === false
+      ? null
+      : await dependencies.store.load(created.fingerprint);
   if (
-    options.allowReuse !== false &&
     existing !== null &&
     existing.diffDigest === created.diffDigest &&
     isReusable(existing)
   ) {
-    return existing.status === "passed"
-      ? summarizePassedSession(dependencies, existing)
-      : existing;
+    return existing;
   }
 
   let session = created;
@@ -361,8 +428,6 @@ export async function runGate(
   session = await saveTransition(dependencies, session, "analyzed", {
     analysis
   });
-  session = await resolveFindings(dependencies, session);
-
   const categories = resolveQuestionCategories(
     config,
     analysis,
@@ -376,11 +441,30 @@ export async function runGate(
       `必須質問カテゴリが${requiredCount}件あります。questions.countを${requiredCount}以上にしてください。`
     );
   }
-  const questions = await dependencies.model.generateQuestions({
-    analysis,
-    categories,
-    questionCount: config.questions.count
-  });
+  const questionGenerationController = new AbortController();
+  const questionGeneration = settle(
+    dependencies.model.generateQuestions(
+      {
+        analysis,
+        categories,
+        questionCount: config.questions.count
+      },
+      questionGenerationController.signal
+    )
+  );
+  try {
+    session = await resolveFindings(dependencies, session);
+  } catch (error) {
+    questionGenerationController.abort();
+    // settle() already observes rejection; awaiting here could delay fix_requested
+    // indefinitely when a model adapter ignores AbortSignal.
+    throw error;
+  }
+  const questionGenerationResult = await questionGeneration;
+  if (questionGenerationResult.status === "rejected") {
+    throw questionGenerationResult.error;
+  }
+  const questions = questionGenerationResult.value;
   const missingRequired = categories
     .filter((category) => category.required)
     .filter(
@@ -407,7 +491,6 @@ export async function runGate(
     );
   }
   session = await saveTransition(dependencies, session, "passed");
-  session = await summarizePassedSession(dependencies, session);
   terminal.write(heading("通過"));
   terminal.write(success("説明責任の記録を保存しました。pushを続行できます。"));
   return session;

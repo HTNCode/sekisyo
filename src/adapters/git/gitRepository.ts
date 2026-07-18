@@ -3,7 +3,10 @@ import {
   runCheckedCommandWithStdoutLimit,
   type CommandResult
 } from "./command.ts";
-import type { RepositoryRange } from "../../ports/git-repository.ts";
+import type {
+  RepositoryDiffTarget,
+  RepositoryRange
+} from "../../ports/git-repository.ts";
 
 const OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 
@@ -97,9 +100,17 @@ async function findEmptyTree(repoRoot: string): Promise<string> {
   return oid;
 }
 
-async function resolveDiffBase(target: RepositoryRange): Promise<string> {
+export async function resolveDiffBase(
+  target: RepositoryRange
+): Promise<string> {
   if (!isObjectId(target.base) || !isObjectId(target.head)) {
     throw new Error("A valid base and head object ID are required.");
+  }
+  if (target.diffBase !== undefined) {
+    if (!isObjectId(target.diffBase)) {
+      throw new Error("A valid diff-base object ID is required.");
+    }
+    return target.diffBase;
   }
   if (target.rootCommit === true) {
     if (target.base !== target.head) {
@@ -140,13 +151,9 @@ export async function readDiff(request: DiffRequest): Promise<string> {
   return result.stdout;
 }
 
-export async function readRepositoryDiff(request: {
-  readonly base: string;
-  readonly head: string;
-  readonly maxBytes: number;
-  readonly repoRoot: string;
-  readonly rootCommit?: boolean;
-}): Promise<string> {
+export async function readRepositoryDiff(
+  request: RepositoryDiffTarget
+): Promise<string> {
   if (request.maxBytes < 1) {
     throw new Error("maxBytes must be greater than zero.");
   }

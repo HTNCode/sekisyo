@@ -65,6 +65,7 @@ describe("GitCliRepository", () => {
     const range = {
       repoRoot: repo,
       base: state.base,
+      diffBase: state.diffBase,
       head: state.head,
       rootCommit: state.rootCommit
     };
@@ -140,6 +141,7 @@ describe("GitCliRepository", () => {
     const changedFiles = await adapter.changedFiles({
       repoRoot: repo,
       base: state.base,
+      diffBase: state.diffBase,
       head: state.head
     });
 

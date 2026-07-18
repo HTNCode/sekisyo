@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   excludedDiffPaths,
   matchesGlob,
+  matchesPrivacyGlob,
   resolveQuestionCategories
 } from "../../../src/application/policy.ts";
 import { DEFAULT_CONFIG } from "../../../src/config/defaults.ts";
@@ -39,7 +40,7 @@ describe("question policy", () => {
   });
 
   test("秘密パスは内容ではなくファイル名だけで検出する", () => {
-    expect(matchesGlob(".env.local", "**/.env*")).toBe(true);
+    expect(matchesPrivacyGlob(".env.local", "**/.env*")).toBe(true);
     expect(
       excludedDiffPaths(
         ["src/index.ts", "secrets/token.txt", ".env.local"],
@@ -60,7 +61,7 @@ describe("question policy", () => {
   ])(
     "privacy globはパス区切りを正規化して近似名を誤検出しない: %s",
     (path, pattern, expected) => {
-      expect(matchesGlob(path, pattern)).toBe(expected);
+      expect(matchesPrivacyGlob(path, pattern)).toBe(expected);
     }
   );
 
@@ -79,11 +80,18 @@ describe("question policy", () => {
     ).toEqual([".env", "src\\secrets\\token.txt"]);
   });
 
-  test("privacy globはWindowsの大小文字を区別しない", () => {
-    expect(matchesGlob(".ENV.production", "**/.env*")).toBe(
-      process.platform === "win32"
-    );
-    expect(matchesGlob("src/Secrets/token.txt", "**/secrets/**")).toBe(
+  test.each([
+    [".ENV.production", "**/.env*"],
+    ["src/Secrets/token.txt", "**/secrets/**"],
+    ["certificates/CLIENT.PEM", "**/*.pem"],
+    ["private/CLIENT.KEY", "**/*.key"]
+  ])("privacy globは全OSで大小文字を区別しない: %s", (path, pattern) => {
+    expect(matchesPrivacyGlob(path, pattern)).toBe(true);
+    expect(excludedDiffPaths([path], [pattern])).toEqual([path]);
+  });
+
+  test("質問taxonomyの通常glob semanticsはprivacy matcherから独立している", () => {
+    expect(matchesGlob("src/Billing/charge.ts", "src/billing/**")).toBe(
       process.platform === "win32"
     );
   });

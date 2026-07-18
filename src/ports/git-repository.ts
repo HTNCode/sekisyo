@@ -5,6 +5,11 @@ export interface InspectRepositoryOptions {
   readonly base?: string;
   readonly prBase?: string;
   /**
+   * Previously resolved absolute repository root. Internal callers can pass
+   * this to avoid repeating repository discovery.
+   */
+  readonly repoRoot?: string;
+  /**
    * Exact remote destination OID used only when no explicit, PR, or remote
    * default base can be resolved.
    */
@@ -14,6 +19,7 @@ export interface InspectRepositoryOptions {
 export interface RepositoryState {
   readonly repoRoot: string;
   readonly base: string;
+  readonly diffBase: string;
   readonly head: string;
   readonly remote: string;
   readonly ref: string;
@@ -27,6 +33,7 @@ export interface RepositoryState {
 export interface RepositoryRange {
   readonly repoRoot: string;
   readonly base: string;
+  readonly diffBase?: string;
   readonly head: string;
   readonly rootCommit?: boolean;
 }
@@ -42,6 +49,6 @@ export interface GitRepository {
   ): Promise<RepositoryState>;
   readDiff(target: RepositoryDiffTarget): Promise<string>;
   changedFiles(target: RepositoryRange): Promise<readonly string[]>;
-  gitPath(path: string): Promise<string>;
+  gitPath(path: string, repoRoot?: string): Promise<string>;
   passthrough(args: readonly string[]): Promise<number>;
 }
