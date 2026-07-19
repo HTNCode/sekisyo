@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   ensureSessionSummary,
+  PROMPT_VERSION,
   runGate,
   type GateDependencies,
   type GateTarget
@@ -59,7 +60,16 @@ const initialQuestion: Question = {
 };
 
 const FOLLOW_UP_PROMPT = "空の場合に通る分岐を行番号つきで説明してください";
-const VALID_REVIEW_REASON = "呼び出し側で直列化し、競合リスクを回避します";
+const VALID_REVIEW_PARTS = [
+  "同じキャッシュキーへの並行更新時だけ適用する仕様です",
+  "古い値が後から書き戻され、利用者が更新前の値を参照する可能性があります",
+  "呼び出し側で直列化し、競合リスクを回避します"
+] as const;
+const VALID_REVIEW_REASON = [
+  `適用範囲・仕様: ${VALID_REVIEW_PARTS[0]}`,
+  `結果・影響: ${VALID_REVIEW_PARTS[1]}`,
+  `対応・判断: ${VALID_REVIEW_PARTS[2]}`
+].join("\n");
 
 const summary: QaSummary = {
   decisions: ["明示的に無効化する"],
@@ -156,6 +166,12 @@ class ScriptedModel implements QaModel {
   async judgeAnswer(
     input: Parameters<QaModel["judgeAnswer"]>[0]
   ): Promise<AnswerJudgment> {
+    if (input.question.id.startsWith("self-review-")) {
+      return {
+        feedback: "指摘に対応した具体的な説明です",
+        passed: true
+      };
+    }
     this.judgedQuestionIds.push(input.question.id);
     const judgment = this.judgments.shift();
     if (judgment === undefined) {
@@ -177,7 +193,15 @@ class ExhaustingModel implements QaModel {
     return [initialQuestion];
   }
 
-  async judgeAnswer(): Promise<AnswerJudgment> {
+  async judgeAnswer(
+    input: Parameters<QaModel["judgeAnswer"]>[0]
+  ): Promise<AnswerJudgment> {
+    if (input.question.id.startsWith("self-review-")) {
+      return {
+        feedback: "指摘に対応した具体的な説明です",
+        passed: true
+      };
+    }
     this.judgmentCalls += 1;
     return {
       feedback: "まだ具体的な根拠が不足しています",
@@ -216,6 +240,10 @@ function target(): GateTarget {
 }
 
 describe("runGate", () => {
+  test("構造化セルフレビューは旧通過記録を再利用しないprompt versionを使う", () => {
+    expect(PROMPT_VERSION).toBe("sekisyo-prompts-v4");
+  });
+
   test("session digestとanalyzerへ同じ固定diffを渡す", async () => {
     const gateTarget = { ...target() };
     const originalDiff = gateTarget.diff;
@@ -267,7 +295,7 @@ describe("runGate", () => {
     const terminal = new ScriptedTerminal(
       [
         "問題ないです",
-        VALID_REVIEW_REASON,
+        ...VALID_REVIEW_PARTS,
         "空でも大丈夫です",
         "src/cache.ts:12のempty分岐で何も書き戻しません"
       ],
@@ -314,7 +342,7 @@ describe("runGate", () => {
     expect(model.summarizeCalls).toBe(0);
     expect(
       terminal.messages.some((message) =>
-        message.includes("定型的な回答では記録できません")
+        message.includes("適用範囲・仕様が具体的ではありません")
       )
     ).toBe(true);
   });
@@ -329,7 +357,7 @@ describe("runGate", () => {
         model: new ScriptedModel(),
         store,
         terminal: new ScriptedTerminal(
-          [VALID_REVIEW_REASON, "曖昧", "具体的な根拠"],
+          [...VALID_REVIEW_PARTS, "曖昧", "具体的な根拠"],
           ["intentional"]
         )
       },
@@ -381,7 +409,7 @@ describe("runGate", () => {
         model: firstModel,
         store,
         terminal: new ScriptedTerminal(
-          [VALID_REVIEW_REASON, "曖昧", "具体的な根拠"],
+          [...VALID_REVIEW_PARTS, "曖昧", "具体的な根拠"],
           ["intentional"]
         )
       },
@@ -446,7 +474,7 @@ describe("runGate", () => {
         model: new ScriptedModel(),
         store,
         terminal: new ScriptedTerminal(
-          [VALID_REVIEW_REASON, "曖昧", "具体的な根拠"],
+          [...VALID_REVIEW_PARTS, "曖昧", "具体的な根拠"],
           ["intentional"]
         )
       },
@@ -471,7 +499,7 @@ describe("runGate", () => {
         model: new ScriptedModel(),
         store,
         terminal: new ScriptedTerminal(
-          ["上限10件、超過時は400で拒否します", "曖昧", "具体的な根拠"],
+          [...VALID_REVIEW_PARTS, "曖昧", "具体的な根拠"],
           ["intentional"]
         )
       },
@@ -498,7 +526,7 @@ describe("runGate", () => {
           model,
           store,
           terminal: new ScriptedTerminal(
-            [VALID_REVIEW_REASON, "回答1", "回答2"],
+            [...VALID_REVIEW_PARTS, "回答1", "回答2"],
             ["intentional"]
           )
         },
@@ -568,6 +596,239 @@ describe("runGate", () => {
     ).rejects.toMatchObject({ code: "fix_requested" });
     expect(model.judgments).toHaveLength(2);
     expect([...store.records.values()][0]?.status).toBe("analyzed");
+  });
+
+  test("理由入力中に:fixで修正へ切り替えられる", async () => {
+    const store = new MemorySessionStore();
+
+    await expect(
+      runGate(
+        {
+          analyzer: new StaticAnalyzer(),
+          model: new ScriptedModel(),
+          store,
+          terminal: new ScriptedTerminal([":fix"], ["intentional"])
+        },
+        {
+          ...DEFAULT_CONFIG,
+          questions: { ...DEFAULT_CONFIG.questions, count: 1 }
+        },
+        target()
+      )
+    ).rejects.toMatchObject({ code: "fix_requested" });
+    expect([...store.records.values()][0]?.status).toBe("analyzed");
+  });
+
+  test("理由が3回不足すると再入力か修正中断を選べる", async () => {
+    const store = new MemorySessionStore();
+    const terminal = new ScriptedTerminal(
+      ["問題ないです", "大丈夫です", "仕様どおりです"],
+      ["intentional", "fix"]
+    );
+
+    await expect(
+      runGate(
+        {
+          analyzer: new StaticAnalyzer(),
+          model: new ScriptedModel(),
+          store,
+          terminal
+        },
+        {
+          ...DEFAULT_CONFIG,
+          questions: { ...DEFAULT_CONFIG.questions, count: 1 }
+        },
+        target()
+      )
+    ).rejects.toMatchObject({ code: "fix_requested" });
+    expect(
+      terminal.messages.filter((message) =>
+        message.includes("適用範囲・仕様が具体的ではありません")
+      )
+    ).toHaveLength(3);
+  });
+
+  test("理由が3回不足しても再入力後の有効な説明を保存できる", async () => {
+    const store = new MemorySessionStore();
+    const terminal = new ScriptedTerminal(
+      [
+        "問題ないです",
+        "大丈夫です",
+        "仕様どおりです",
+        ...VALID_REVIEW_PARTS,
+        "空でも大丈夫です",
+        "src/cache.ts:12のempty分岐で何も書き戻しません"
+      ],
+      ["intentional", "retry"]
+    );
+
+    const session = await runGate(
+      {
+        analyzer: new StaticAnalyzer(),
+        model: new ScriptedModel(),
+        store,
+        terminal
+      },
+      {
+        ...DEFAULT_CONFIG,
+        questions: { ...DEFAULT_CONFIG.questions, count: 1 }
+      },
+      target()
+    );
+
+    expect(session.status).toBe("passed");
+    expect(session.reviewResolutions[0]?.reason).toBe(VALID_REVIEW_REASON);
+  });
+
+  test("指摘との関連性をモデルで判定し、不足時は3観点を再説明させる", async () => {
+    const store = new MemorySessionStore();
+    let reviewJudgmentCalls = 0;
+    const model: QaModel = {
+      async generateQuestions() {
+        return [initialQuestion];
+      },
+      async judgeAnswer(input) {
+        if (input.question.id.startsWith("self-review-")) {
+          reviewJudgmentCalls += 1;
+          expect(input.question.evidence).toContain("src/cache.ts:15");
+          expect(input.question.evidence).toContain("キャッシュ更新が競合する");
+          return reviewJudgmentCalls === 1
+            ? {
+                feedback: "結果と指摘の関係が不足しています",
+                followUp: "古い値が戻る経路を具体化してください",
+                missingConcept: "指摘との因果関係",
+                passed: false
+              }
+            : {
+                feedback: "指摘に結び付いた説明です",
+                passed: true
+              };
+        }
+        return {
+          feedback: "具体的に説明できています",
+          passed: true
+        };
+      },
+      async summarize() {
+        return summary;
+      }
+    };
+    const revisedParts = [
+      "同じキーを並行更新する経路だけに適用する仕様です",
+      "遅い更新が古い値を書き戻し利用者に更新前の値が表示されます",
+      "src/cache.tsの呼び出し側を直列化して競合を回避します"
+    ] as const;
+    const terminal = new ScriptedTerminal(
+      [...VALID_REVIEW_PARTS, ...revisedParts, "空入力の分岐を説明します"],
+      ["intentional"]
+    );
+
+    const session = await runGate(
+      {
+        analyzer: new StaticAnalyzer(),
+        model,
+        store,
+        terminal
+      },
+      {
+        ...DEFAULT_CONFIG,
+        questions: { ...DEFAULT_CONFIG.questions, count: 1 }
+      },
+      target()
+    );
+
+    expect(reviewJudgmentCalls).toBe(2);
+    expect(session.reviewResolutions[0]?.reason).toContain(revisedParts[1]);
+    expect(
+      terminal.messages.some((message) =>
+        message.includes("説明を再確認してください")
+      )
+    ).toBe(true);
+  });
+
+  test("指摘との関連性が2回不足すると理由を保存せず中断する", async () => {
+    const store = new MemorySessionStore();
+    const model: QaModel = {
+      async generateQuestions() {
+        return [initialQuestion];
+      },
+      async judgeAnswer(input) {
+        if (!input.question.id.startsWith("self-review-")) {
+          throw new Error("口頭試問へ進んではいけません");
+        }
+        return {
+          feedback: "指摘との関係が説明されていません",
+          followUp: "この指摘で示された失敗との因果関係を説明してください",
+          missingConcept: "指摘との関連性",
+          passed: false
+        };
+      },
+      async summarize() {
+        throw new Error("要約へ進んではいけません");
+      }
+    };
+
+    await expect(
+      runGate(
+        {
+          analyzer: new StaticAnalyzer(),
+          model,
+          store,
+          terminal: new ScriptedTerminal(
+            [...VALID_REVIEW_PARTS, ...VALID_REVIEW_PARTS],
+            ["intentional"]
+          )
+        },
+        {
+          ...DEFAULT_CONFIG,
+          questions: { ...DEFAULT_CONFIG.questions, count: 1 }
+        },
+        target()
+      )
+    ).rejects.toMatchObject({ code: "review_reason_exhausted" });
+    expect([...store.records.values()][0]?.reviewResolutions).toHaveLength(0);
+  });
+
+  test("理由入力中の:fixでも進行中の質問生成をabortする", async () => {
+    const store = new MemorySessionStore();
+    let generationAborted = false;
+    const model: QaModel = {
+      generateQuestions(_input, signal) {
+        return new Promise<readonly Question[]>((_resolve, reject) => {
+          signal?.addEventListener(
+            "abort",
+            () => {
+              generationAborted = true;
+              reject(new Error("question generation aborted"));
+            },
+            { once: true }
+          );
+        });
+      },
+      async judgeAnswer() {
+        throw new Error("回答判定へ進んではいけません");
+      },
+      async summarize() {
+        throw new Error("要約へ進んではいけません");
+      }
+    };
+
+    await expect(
+      runGate(
+        {
+          analyzer: new StaticAnalyzer(),
+          model,
+          store,
+          terminal: new ScriptedTerminal([":fix"], ["intentional"])
+        },
+        {
+          ...DEFAULT_CONFIG,
+          questions: { ...DEFAULT_CONFIG.questions, count: 1 }
+        },
+        target()
+      )
+    ).rejects.toMatchObject({ code: "fix_requested" });
+    expect(generationAborted).toBe(true);
   });
 
   test("一次レビュー中に質問生成を開始し、修正選択時にabortする", async () => {
@@ -705,7 +966,7 @@ describe("runGate", () => {
         model: new ScriptedModel(),
         store,
         terminal: new ScriptedTerminal(
-          [VALID_REVIEW_REASON, "曖昧", "具体的な根拠"],
+          [...VALID_REVIEW_PARTS, "曖昧", "具体的な根拠"],
           ["intentional"]
         )
       },

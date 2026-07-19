@@ -1,87 +1,76 @@
 import { describe, expect, test } from "bun:test";
-import { validateReviewReason } from "../../../src/application/review-reason.ts";
+import {
+  formatReviewReason,
+  validateReviewReasonField,
+  type ReviewReasonField
+} from "../../../src/application/review-reason.ts";
 
-describe("validateReviewReason", () => {
+describe("validateReviewReasonField", () => {
   test.each([
-    "問題ないです",
-    "問　題・ないです！",
-    "問 題 な し",
-    "大丈夫です",
-    "大丈夫です。問題ありません。",
-    "仕様どおりだと思います",
-    "仕様どおりです。リスクは許容します"
-  ])("表記揺れを含む定型文を拒否する: %s", (reason) => {
-    expect(validateReviewReason(reason)).toEqual({
-      message:
-        "定型的な回答では記録できません。" +
-        "具体的な仕様・制約と、リスクをどう扱うかを入力してください。",
-      valid: false
-    });
-  });
+    ["scope", "問題ないです"],
+    ["scope", "私はシステム総責任者です"],
+    ["outcome", "大丈夫です"],
+    ["outcome", "影響ありません"],
+    ["handling", "仕様どおりです。リスクは許容します"],
+    ["handling", "とりあえずこのまま許容します"]
+  ] as const)(
+    "%sの定型的・権限依存・曖昧な説明を拒否する: %s",
+    (field, reason) => {
+      expect(validateReviewReasonField(field, reason)).toMatchObject({
+        valid: false
+      });
+    }
+  );
 
-  test("仕様・制約が不足している観点を示す", () => {
-    expect(validateReviewReason("競合リスクは直列化で回避します")).toEqual({
-      message:
-        "仕様・制約の具体化が不足しています。" +
-        "対象条件、上限、呼び出し側の前提などを入力してください。",
-      valid: false
-    });
-  });
+  test.each([
+    ["scope", "CSVインポート経由の月末一括登録専用です"],
+    ["scope", "認証済み管理者に限り請求確定前の注文を対象にします"],
+    ["outcome", "利用者には直近の確定値が表示されます"],
+    ["outcome", "Number.MAX_VALUE付近では中間合計がInfinityになります"],
+    ["handling", "境界値をユニットテストで確認します"],
+    ["handling", "呼び出し側で直列化し競合を回避します"]
+  ] as const)(
+    "%sの自然な説明を固定された技術語彙に依存せず受理する",
+    (field, reason) => {
+      expect(validateReviewReasonField(field, reason)).toEqual({
+        valid: true,
+        value: reason
+      });
+    }
+  );
 
-  test("リスクの扱いが不足している観点を示す", () => {
-    expect(validateReviewReason("API仕様では最大10件です")).toEqual({
-      message:
-        "リスクの扱いが不足しています。" +
-        "想定リスクと、回避・軽減・監視・許容の方針を入力してください。",
-      valid: false
-    });
-  });
+  test.each(["scope", "outcome", "handling"] as const)(
+    "%sは6,000文字まで受理し6,001文字を拒否する",
+    (field: ReviewReasonField) => {
+      const prefix = "対象コードについて具体的な説明を入力します";
+      const atLimit = `${prefix}${"a".repeat(6_000 - prefix.length)}`;
+      const overLimit = `${prefix}${"a".repeat(6_001 - prefix.length)}`;
 
-  test("観点名だけを並べた理由を情報不足として拒否する", () => {
+      expect(validateReviewReasonField(field, atLimit)).toEqual({
+        valid: true,
+        value: atLimit
+      });
+      expect(validateReviewReasonField(field, overLimit)).toMatchObject({
+        valid: false
+      });
+    }
+  );
+});
+
+describe("formatReviewReason", () => {
+  test("3つの観点をレビュー記録として読みやすく整形する", () => {
     expect(
-      validateReviewReason("仕様と制約は確認済みで、リスクは許容します")
-    ).toEqual({
-      message:
-        "仕様・制約とリスクの扱いが不足しています。" +
-        "対象条件や前提と、想定リスクをどう回避・軽減・許容するかを具体的に入力してください。",
-      valid: false
-    });
-  });
-
-  test("ラベルに記号を足しただけの理由を情報不足として拒否する", () => {
-    expect(validateReviewReason("仕様A、リスクBは許容します")).toEqual({
-      message:
-        "仕様・制約とリスクの扱いが不足しています。" +
-        "対象条件や前提と、想定リスクをどう回避・軽減・許容するかを具体的に入力してください。",
-      valid: false
-    });
-  });
-
-  test.each([
-    "とりあえずこのまま進めてください",
-    "なんとなくこの実装にしました",
-    "とりあえず…ok",
-    "とりあえずこのまま進めてください ok",
-    "なんとなく既存データを更新しました",
-    "問題ないのでこのまま進めてください lgtm"
-  ])("具体アンカーのない曖昧な理由を拒否する: %s", (reason) => {
-    expect(validateReviewReason(reason)).toEqual({
-      message:
-        "仕様・制約とリスクの扱いが不足しています。" +
-        "対象条件や前提と、想定リスクをどう回避・軽減・許容するかを具体的に入力してください。",
-      valid: false
-    });
-  });
-
-  test.each([
-    "上限10件、超過時は400で拒否します",
-    "呼び出し側で直列化し、競合リスクを回避します",
-    "呼び出し元でロックを取得するため競合しません",
-    "入力0件なら早期returnし、DB書き込みをしません"
-  ])("短くても具体的な理由を受理する: %s", (reason) => {
-    expect(validateReviewReason(reason)).toEqual({
-      valid: true,
-      value: reason
-    });
+      formatReviewReason({
+        scope: "同一注文の再送時だけ",
+        outcome: "二重引当が起き得る",
+        handling: "一意制約で防ぐ"
+      })
+    ).toBe(
+      [
+        "適用範囲・仕様: 同一注文の再送時だけ",
+        "結果・影響: 二重引当が起き得る",
+        "対応・判断: 一意制約で防ぐ"
+      ].join("\n")
+    );
   });
 });

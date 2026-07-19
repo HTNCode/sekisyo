@@ -1,4 +1,5 @@
 import type { SekisyoConfig } from "../config/schema.ts";
+import type { ReviewFinding } from "../domain/analysis.ts";
 import type {
   AnswerJudgment,
   QaExchange,
@@ -20,9 +21,14 @@ import type {
 import { heading, muted, success, warning } from "../ui/format.ts";
 import { GateError } from "./errors.ts";
 import { excludedDiffPaths, resolveQuestionCategories } from "./policy.ts";
-import { validateReviewReason } from "./review-reason.ts";
+import {
+  formatReviewReason,
+  validateReviewReasonField,
+  type ReviewReasonField,
+  type ReviewReasonParts
+} from "./review-reason.ts";
 
-export const PROMPT_VERSION = "sekisyo-prompts-v3";
+export const PROMPT_VERSION = "sekisyo-prompts-v4";
 
 export interface GateTarget {
   readonly analysisTarget: ReviewTarget;
@@ -117,6 +123,112 @@ function location(path: string, line?: number): string {
   return line === undefined ? path : `${path}:${line}`;
 }
 
+const MAX_REVIEW_REASON_ATTEMPTS_BEFORE_CHOICE = 3;
+const MAX_REVIEW_REASON_JUDGMENTS = 2;
+
+function fixRequestedError(path: string): GateError {
+  return new GateError(
+    "fix_requested",
+    `${path} の修正を選択したため中断しました。`
+  );
+}
+
+async function promptReviewReasonField(
+  terminal: Terminal,
+  field: ReviewReasonField,
+  message: string,
+  findingPath: string
+): Promise<string> {
+  let failedAttempts = 0;
+  while (true) {
+    const candidate = await terminal.prompt(
+      `${message}（修正に切り替える場合は :fix）`
+    );
+    if (candidate.trim().toLowerCase() === ":fix") {
+      throw fixRequestedError(findingPath);
+    }
+    const validation = validateReviewReasonField(field, candidate);
+    if (validation.valid) {
+      return validation.value;
+    }
+    terminal.write(warning(validation.message));
+    failedAttempts += 1;
+    if (failedAttempts < MAX_REVIEW_REASON_ATTEMPTS_BEFORE_CHOICE) {
+      continue;
+    }
+    const retryAction = await terminal.select("次の操作を選択してください", [
+      {
+        label: "説明を再入力",
+        value: "retry",
+        description: "不足している要素を補って再入力します"
+      },
+      {
+        label: "修正するため中断",
+        value: "fix",
+        description: "pushせず、コードを直してから再実行します"
+      }
+    ] as const);
+    if (retryAction === "fix") {
+      throw fixRequestedError(findingPath);
+    }
+    failedAttempts = 0;
+  }
+}
+
+async function collectReviewReason(
+  terminal: Terminal,
+  findingPath: string
+): Promise<string> {
+  const reasonParts: ReviewReasonParts = {
+    scope: await promptReviewReasonField(
+      terminal,
+      "scope",
+      "この挙動が意図的である適用範囲・仕様・制約を説明してください",
+      findingPath
+    ),
+    outcome: await promptReviewReasonField(
+      terminal,
+      "outcome",
+      "その条件で起きる結果と、利用者や後続処理への影響を説明してください",
+      findingPath
+    ),
+    handling: await promptReviewReasonField(
+      terminal,
+      "handling",
+      "その影響をどう回避・軽減・検証・限定するか、または許容する根拠を説明してください",
+      findingPath
+    )
+  };
+  return formatReviewReason(reasonParts);
+}
+
+function reviewReasonQuestion(
+  finding: ReviewFinding,
+  findingPath: string
+): Question {
+  return {
+    category: "custom",
+    evidence: [
+      findingPath,
+      finding.title,
+      finding.explanation,
+      ...(finding.suggestion === undefined ? [] : [finding.suggestion])
+    ],
+    id: `self-review-${finding.id}`.slice(0, 200),
+    learningObjective:
+      "指摘された挙動について、適用範囲、具体的な結果、リスク対応を区別して説明できる",
+    prompt:
+      `${findingPath} の「${finding.title}」を意図的な変更として扱う説明が、` +
+      "指摘内容に対応し、具体的な仕様・影響・リスク対応を示しているか確認してください。",
+    rubric: [
+      "適用範囲・仕様が指摘対象に結び付いている",
+      "結果・影響が否定や一般論ではなく具体的である",
+      "対応・判断が実施しない対策や根拠のない許容になっていない",
+      "3項目が同じ文のコピーではなく、それぞれの観点を説明している"
+    ]
+  };
+}
+
 async function resolveFindings(
   dependencies: GateDependencies,
   session: SessionRecord
@@ -154,23 +266,41 @@ async function resolveFindings(
       }
     ] as const);
     if (action === "fix") {
-      throw new GateError(
-        "fix_requested",
-        `${location(finding.path, finding.line)} の修正を選択したため中断しました。`
-      );
+      throw fixRequestedError(location(finding.path, finding.line));
     }
 
-    let reason: string;
-    while (true) {
-      const candidate = await terminal.prompt(
-        "どの仕様・制約に基づく挙動で、想定リスクをどう扱うか説明してください"
+    const findingPath = location(finding.path, finding.line);
+    const question = reviewReasonQuestion(finding, findingPath);
+    let reason: string | undefined;
+    for (
+      let judgmentAttempt = 0;
+      judgmentAttempt < MAX_REVIEW_REASON_JUDGMENTS;
+      judgmentAttempt += 1
+    ) {
+      const candidate = await collectReviewReason(terminal, findingPath);
+      const judgment = await dependencies.model.judgeAnswer({
+        answer: candidate,
+        question
+      });
+      assertJudgmentCorrelation(judgment);
+      terminal.write(
+        judgment.passed
+          ? success(`説明確認: ${judgment.feedback}`)
+          : warning(`説明を再確認してください: ${judgment.feedback}`)
       );
-      const validation = validateReviewReason(candidate);
-      if (validation.valid) {
-        reason = validation.value;
+      if (judgment.passed) {
+        reason = candidate;
         break;
       }
-      terminal.write(warning(validation.message));
+      if (judgment.followUp !== undefined) {
+        terminal.write(muted(`確認ポイント: ${judgment.followUp}`));
+      }
+    }
+    if (reason === undefined) {
+      throw new GateError(
+        "review_reason_exhausted",
+        `${findingPath} の説明が指摘内容と結び付きませんでした。変更を確認して再実行してください。`
+      );
     }
     current = {
       ...current,
