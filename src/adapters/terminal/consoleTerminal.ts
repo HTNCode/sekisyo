@@ -11,13 +11,16 @@ export class ConsoleTerminal {
   private readonly reader;
 
   public constructor(
-    input: Readable,
+    input: Readable & { readonly isTTY?: boolean },
     private readonly output: Writable
   ) {
+    // CONIN$ や /dev/tty を fs ストリームで開いた場合は raw モードに
+    // 切り替えられず、コンソールのネイティブエコーと readline のエコーが
+    // 二重表示になるため、本物の TTY のときだけ readline にエコーさせる
     this.reader = createInterface({
       input,
       output,
-      terminal: true
+      terminal: input.isTTY === true
     });
   }
 
