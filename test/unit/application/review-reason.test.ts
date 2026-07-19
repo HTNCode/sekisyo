@@ -20,6 +20,31 @@ describe("validateReviewReasonField", () => {
   });
 
   test.each([
+    ["scope", "No problem"],
+    ["scope", "Works as intended."],
+    ["scope", "By design"],
+    ["outcome", "No impact"],
+    ["outcome", "It's fine"],
+    ["handling", "LGTM, acceptable risk"],
+    ["handling", "I accept the risks"]
+  ] as const)("%sの英語の完全な定型文を拒否する: %s", (field, reason) => {
+    expect(validateReviewReasonField(field, reason)).toMatchObject({
+      valid: false
+    });
+  });
+
+  test.each([
+    ["scope", "This path only handles bulk CSV imports at month end"],
+    ["outcome", "The average underflows to zero for MIN_VALUE inputs"],
+    ["handling", "Unit tests cover the boundary values before release"]
+  ] as const)("%sの英語の実質的な説明を受理する: %s", (field, reason) => {
+    expect(validateReviewReasonField(field, reason)).toEqual({
+      valid: true,
+      value: reason
+    });
+  });
+
+  test.each([
     ["scope", "CSVインポート経由の月末一括登録専用です"],
     ["scope", "認証済み管理者に限り請求確定前の注文を対象にします"],
     ["outcome", "利用者には直近の確定値が表示されます"],

@@ -1,6 +1,10 @@
 const CANNED_REASON_PATTERN =
   /^(?:(?:特に)?問題(?:は)?(?:ない|無い|なし|無し|ありません|ございません)(?:です)?(?:と思います)?|大丈夫(?:です|だ)?(?:と思います)?|仕様(?:どおり|通り)(?:です|だ)?(?:と思います)?|想定(?:どおり|通り)(?:です|だ)?(?:と思います)?|意図的(?:な変更)?(?:です)?|対応不要(?:です)?|影響(?:は)?(?:ない|無い|ありません)(?:です)?|許容範囲(?:です)?|リスク(?:は)?(?:許容|受け入れ)(?:します|です)?)+$/u;
 
+// compact() 適用後（空白・記号除去、小文字化）の文字列に対して照合する
+const CANNED_REASON_EN_PATTERN =
+  /^(?:noproblems?|noissues?|nobugs?|noimpact|norisks?|nochanges?needed|looksgood(?:tome)?|lgtm|allgood|(?:its|thisis)fine|worksas(?:intended|expected|designed)|(?:as|by)design(?:ed)?|as(?:intended|expected|specified)|intentional(?:change)?|intended(?:behaviou?r)?|acceptablerisk|riskis?accepted|iaccepttherisks?)+$/;
+
 const MAX_FIELD_CHARACTERS = 6_000;
 
 export type ReviewReasonField = "scope" | "outcome" | "handling";
@@ -30,11 +34,15 @@ function compact(value: string): string {
 }
 
 function isCannedReason(value: string): boolean {
-  const withoutConnectors = compact(value).replace(
+  const compacted = compact(value);
+  const withoutConnectors = compacted.replace(
     /(?:なので|ですので|ので|から|また|かつ|および|そして)/gu,
     ""
   );
-  return CANNED_REASON_PATTERN.test(withoutConnectors);
+  return (
+    CANNED_REASON_PATTERN.test(withoutConnectors) ||
+    CANNED_REASON_EN_PATTERN.test(compacted)
+  );
 }
 
 function fieldLabel(field: ReviewReasonField): string {
