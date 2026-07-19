@@ -275,7 +275,7 @@ describe("OpenAIQaModel", () => {
     }
   );
 
-  test("レビュー強度lightでは一般論を不合格とする共通ルールを課さない", async () => {
+  test("レビュー強度lightでは全強度の基準を参考表示しつつlightの基準を優先させる", async () => {
     const client = new FakeResponsesClient({
       passed: true,
       feedback: "具体的に説明できています",
@@ -287,7 +287,13 @@ describe("OpenAIQaModel", () => {
     await model.judgeAnswer({ answer: "401分岐で処理を止めます", question });
 
     const instructions = client.prompts[0]?.instructions;
-    expect(instructions).not.toContain("コードに結び付かない一般論");
+    expect(instructions).toContain("- light（今回の設定）:");
+    expect(instructions).toContain(
+      "lightの基準だけを適用し、他の強度の要求水準を持ち込まないでください"
+    );
+    expect(instructions).toContain(
+      "共通ルールがlightの基準と矛盾する場合は、lightの基準を優先してください"
+    );
     expect(instructions).toContain("指摘内容と矛盾せず");
     expect(instructions).toContain("全項目の充足を要求しないでください");
   });
