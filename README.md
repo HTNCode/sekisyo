@@ -232,7 +232,11 @@ pass the oral review and the self-review explanations).
   problems, data corruption, and clear specification violations. Style and minor
   maintainability notes are skipped. An answer passes when the purpose of the
   change and its cause-and-effect are explained in the author's own words;
-  exhaustive boundary conditions and trade-offs are not required.
+  exhaustive boundary conditions and trade-offs are not required. Explanations
+  grounded in the change's purpose, use case, or operational premises can pass
+  even without referencing specific lines or identifiers, as long as they are
+  consistent with the finding and show the reasoning behind the decision; the
+  rubric is treated as a reference, not a checklist.
 - **standard** (default) — findings cover concrete problems worth checking
   before push, excluding taste-only style remarks. An answer must connect the
   change to its evidence and causality, plus boundary conditions or trade-offs.

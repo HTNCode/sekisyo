@@ -241,7 +241,7 @@ function target(): GateTarget {
 
 describe("runGate", () => {
   test("構造化セルフレビューは旧通過記録を再利用しないprompt versionを使う", () => {
-    expect(PROMPT_VERSION).toBe("sekisyo-prompts-v4");
+    expect(PROMPT_VERSION).toBe("sekisyo-prompts-v5");
   });
 
   test("session digestとanalyzerへ同じ固定diffを渡す", async () => {

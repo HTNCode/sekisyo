@@ -247,6 +247,9 @@ describe("OpenAIQaModel", () => {
     expect(client.prompts[0]?.instructions).toContain(
       "レビュー強度はstandardです"
     );
+    expect(client.prompts[0]?.instructions).toContain(
+      "コードに結び付かない一般論は不合格です"
+    );
   });
 
   test.each([
@@ -271,6 +274,39 @@ describe("OpenAIQaModel", () => {
       expect(client.prompts[0]?.instructions).toContain(expectedCriteria);
     }
   );
+
+  test("レビュー強度lightでは一般論を不合格とする共通ルールを課さない", async () => {
+    const client = new FakeResponsesClient({
+      passed: true,
+      feedback: "具体的に説明できています",
+      missingConcept: null,
+      followUp: null
+    });
+    const model = new OpenAIQaModel(client, { strictness: "light" });
+
+    await model.judgeAnswer({ answer: "401分岐で処理を止めます", question });
+
+    const instructions = client.prompts[0]?.instructions;
+    expect(instructions).not.toContain("コードに結び付かない一般論");
+    expect(instructions).toContain("指摘内容と矛盾せず");
+    expect(instructions).toContain("全項目の充足を要求しないでください");
+  });
+
+  test("レビュー強度strictでは一般論を不合格とするルールを維持する", async () => {
+    const client = new FakeResponsesClient({
+      passed: true,
+      feedback: "具体的に説明できています",
+      missingConcept: null,
+      followUp: null
+    });
+    const model = new OpenAIQaModel(client, { strictness: "strict" });
+
+    await model.judgeAnswer({ answer: "401分岐で処理を止めます", question });
+
+    expect(client.prompts[0]?.instructions).toContain(
+      "コードに結び付かない一般論は不合格です"
+    );
+  });
 
   test("合格判定では不足概念と追撃質問を返さない", async () => {
     const model = new OpenAIQaModel(
