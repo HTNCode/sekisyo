@@ -28,7 +28,7 @@ import {
   type ReviewReasonParts
 } from "./review-reason.ts";
 
-export const PROMPT_VERSION = "sekisyo-prompts-v5";
+export const PROMPT_VERSION = "sekisyo-prompts-v6";
 
 export interface GateTarget {
   readonly analysisTarget: ReviewTarget;
