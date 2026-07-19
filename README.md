@@ -216,6 +216,35 @@ The four default categories avoid summary questions:
 4. **Failure behavior** — what remains partially written, cached, or visible
    after an error?
 
+## Review strictness
+
+The overall review intensity is a single key in `.sekisyo.yml`:
+
+```yaml
+strictness: standard # light | standard | strict
+```
+
+The level is applied in two places: the Codex analysis prompt (which issues are
+reported as findings) and the answer-judgment prompt (what an answer needs to
+pass the oral review and the self-review explanations).
+
+- **light** — findings only include issues with real impact: bugs, security
+  problems, data corruption, and clear specification violations. Style and minor
+  maintainability notes are skipped. An answer passes when the purpose of the
+  change and its cause-and-effect are explained in the author's own words;
+  exhaustive boundary conditions and trade-offs are not required.
+- **standard** (default) — findings cover concrete problems worth checking
+  before push, excluding taste-only style remarks. An answer must connect the
+  change to its evidence and causality, plus boundary conditions or trade-offs.
+- **strict** — findings additionally cover maintainability, readability, missing
+  tests, and performance concerns. An answer must satisfy the full rubric and
+  explain boundary conditions, trade-offs, and how the change was verified;
+  ambiguous answers fail.
+
+Canned answers such as "no problem" or "as specified" fail at every level.
+`strictness` is part of the policy digest, so changing it invalidates existing
+pass records like any other policy change.
+
 ## Security and privacy
 
 - API keys and raw diffs are never written to pass records or PR bodies.

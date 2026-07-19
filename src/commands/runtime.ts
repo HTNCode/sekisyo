@@ -24,6 +24,7 @@ import {
 } from "../config/index.ts";
 import type { GateDependencies } from "../application/gate.ts";
 import { fingerprint } from "../domain/fingerprint.ts";
+import type { ReviewStrictness } from "../domain/strictness.ts";
 import type {
   DiffAnalyzer,
   GitRepository,
@@ -60,9 +61,13 @@ export interface PrepareGateContextDependencies {
 
 export interface GateDependencyFactories {
   readonly createAnalyzer: (options: {
+    readonly strictness: ReviewStrictness;
     readonly timeoutMs: number;
   }) => DiffAnalyzer;
-  readonly createModel: (options: { readonly model: string }) => QaModel;
+  readonly createModel: (options: {
+    readonly model: string;
+    readonly strictness: ReviewStrictness;
+  }) => QaModel;
 }
 
 const DEFAULT_CONTEXT_DEPENDENCIES: PrepareGateContextDependencies = {
@@ -201,9 +206,13 @@ export function createGateDependencies(
 ): GateDependencies {
   return {
     analyzer: factories.createAnalyzer({
+      strictness: context.config.strictness,
       timeoutMs: context.config.analysis.timeoutSeconds * 1_000
     }),
-    model: factories.createModel({ model: context.config.model }),
+    model: factories.createModel({
+      model: context.config.model,
+      strictness: context.config.strictness
+    }),
     store: context.store,
     ...(terminal === undefined ? {} : { terminal })
   };

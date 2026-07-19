@@ -28,6 +28,10 @@ import type {
   Question
 } from "../../domain/questions.ts";
 import { BUILT_IN_QUESTION_CATEGORIES } from "../../domain/questions.ts";
+import {
+  DEFAULT_REVIEW_STRICTNESS,
+  type ReviewStrictness
+} from "../../domain/strictness.ts";
 import { classifyOpenAIError, OpenAIAdapterError } from "./errors.ts";
 import {
   type OpenAIReasoningEffort,
@@ -48,6 +52,7 @@ export interface OpenAIQaModelOptions {
   readonly maxOutputTokens?: number;
   readonly model?: string;
   readonly reasoningEffort?: OpenAIReasoningEffort;
+  readonly strictness?: ReviewStrictness;
   readonly timeoutMs?: number;
 }
 
@@ -60,6 +65,7 @@ interface ResolvedOpenAIQaModelOptions {
   readonly maxOutputTokens: number;
   readonly model: string;
   readonly reasoningEffort: OpenAIReasoningEffort;
+  readonly strictness: ReviewStrictness;
   readonly timeoutMs: number;
 }
 
@@ -86,6 +92,7 @@ function resolveOptions(
     maxOutputTokens,
     model,
     reasoningEffort: options.reasoningEffort ?? "low",
+    strictness: options.strictness ?? DEFAULT_REVIEW_STRICTNESS,
     timeoutMs
   };
 }
@@ -223,7 +230,7 @@ export class OpenAIQaModel implements QaModel {
       throw new OpenAIAdapterError("invalid_input");
     }
 
-    const prompt = buildAnswerJudgmentPrompt(input);
+    const prompt = buildAnswerJudgmentPrompt(input, this.#options.strictness);
     for (
       let attempt = 0;
       attempt < MAX_ANSWER_JUDGMENT_ATTEMPTS;

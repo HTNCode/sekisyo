@@ -15,6 +15,7 @@ import {
   BunProcessRunner,
   CodexDiffAnalyzer,
   createCodexEnvironment,
+  type CodexDiffAnalyzerOptions,
   type CodexTemporaryWorkspace,
   type CodexTemporaryWorkspaceFactory
 } from "../../src/adapters/codex/index.ts";
@@ -428,7 +429,8 @@ function validInput(
 function createAnalyzer(
   processResult: Partial<ProcessResult> = {},
   output = validOutput,
-  repositorySeeder: RepositorySeeder = seedMinimalRepository
+  repositorySeeder: RepositorySeeder = seedMinimalRepository,
+  options: CodexDiffAnalyzerOptions = {}
 ): {
   readonly analyzer: CodexDiffAnalyzer;
   readonly runner: FakeProcessRunner;
@@ -437,7 +439,7 @@ function createAnalyzer(
   const runner = new FakeProcessRunner(processResult, repositorySeeder);
   const workspaceFactory = new FakeWorkspaceFactory(output);
   return {
-    analyzer: new CodexDiffAnalyzer(runner, workspaceFactory),
+    analyzer: new CodexDiffAnalyzer(runner, workspaceFactory, options),
     runner,
     workspaceFactory
   };
@@ -892,6 +894,37 @@ describe("CodexDiffAnalyzer", () => {
       type: "object"
     });
   });
+
+  test("既定のレビュー強度standardを分析プロンプトに含める", async () => {
+    const { analyzer, runner } = createAnalyzer();
+
+    await analyzer.analyze(validInput());
+
+    const prompt = runner.specs
+      .find((spec) => spec.argv[0] === "codex")
+      ?.argv.at(-1);
+    expect(prompt).toContain("レビュー強度はstandardです");
+  });
+
+  test.each([
+    ["light", "実害が想定される問題だけ"],
+    ["strict", "漏れなく含めてください"]
+  ] as const)(
+    "レビュー強度%sの指示を分析プロンプトに含める",
+    async (strictness, expectedInstruction) => {
+      const { analyzer, runner } = createAnalyzer({}, validOutput, undefined, {
+        strictness
+      });
+
+      await analyzer.analyze(validInput());
+
+      const prompt = runner.specs
+        .find((spec) => spec.argv[0] === "codex")
+        ?.argv.at(-1);
+      expect(prompt).toContain(`レビュー強度は${strictness}です`);
+      expect(prompt).toContain(expectedInstruction);
+    }
+  );
 
   test("制御ファイル・symlink・除外パスをsnapshotから除去する", async () => {
     const { analyzer, runner } = createAnalyzer(

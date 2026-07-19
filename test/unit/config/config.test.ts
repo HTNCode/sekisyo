@@ -37,6 +37,27 @@ questions:
     );
   });
 
+  test.each(["light", "standard", "strict"] as const)(
+    "strictness=%sを受け付ける",
+    (strictness) => {
+      expect(parseConfig({ strictness }).strictness).toBe(strictness);
+    }
+  );
+
+  test("strictness省略時はstandardになる", () => {
+    expect(parseConfig({}).strictness).toBe("standard");
+  });
+
+  test("未知のstrictnessを拒否する", () => {
+    expect(() => parseConfig({ strictness: "extreme" })).toThrow();
+  });
+
+  test("strictnessの変更でpolicy digestが変わる", () => {
+    expect(createPolicyDigest(parseConfig({ strictness: "light" }))).not.toBe(
+      createPolicyDigest(parseConfig({ strictness: "strict" }))
+    );
+  });
+
   test("質問源が空の設定を拒否する", () => {
     expect(() =>
       parseConfig({
