@@ -1,16 +1,6 @@
 const CANNED_REASON_PATTERN =
   /^(?:(?:特に)?問題(?:は)?(?:ない|無い|なし|無し|ありません|ございません)(?:です)?(?:と思います)?|大丈夫(?:です|だ)?(?:と思います)?|仕様(?:どおり|通り)(?:です|だ)?(?:と思います)?|想定(?:どおり|通り)(?:です|だ)?(?:と思います)?|意図的(?:な変更)?(?:です)?|対応不要(?:です)?|影響(?:は)?(?:ない|無い|ありません)(?:です)?|許容範囲(?:です)?|リスク(?:は)?(?:許容|受け入れ)(?:します|です)?)+$/u;
 
-const VAGUE_PATTERN =
-  /とりあえず|なんとなく|分からない|分かりません|わからない|わかりません|説明できない|説明できません|理由はない|理由はありません|(?:この|その)まま(?:進め|許容)/iu;
-
-const AUTHORITY_ONLY_PATTERN =
-  /^(?:(?:私は|自分は|当方は)[^。]{0,30}(?:責任者|管理者|オーナー|owner)|(?:責任者|管理者|オーナー|owner)として)[^。]{0,20}(?:です|なので|だから)?[。.]?$/iu;
-
-const GENERIC_TERMS_PATTERN =
-  /仕様|要件|制約|前提|契約|条件|リスク|危険|影響|問題|意図的|変更|挙動|理由|扱い|対応|方針|確認済み|許容|受け入れ|問題ない|大丈夫|ありません|ございません|しています|します|です|ます|する|あり|なし|ない/giu;
-
-const MIN_INFORMATIVE_CHARACTERS = 8;
 const MAX_FIELD_CHARACTERS = 6_000;
 
 export type ReviewReasonField = "scope" | "outcome" | "handling";
@@ -47,13 +37,6 @@ function isCannedReason(value: string): boolean {
   return CANNED_REASON_PATTERN.test(withoutConnectors);
 }
 
-function informativeCharacterCount(value: string): number {
-  const remainder = compact(value)
-    .replace(GENERIC_TERMS_PATTERN, "")
-    .replace(/[はがをにでとのもへや]/gu, "");
-  return [...new Set(remainder)].length;
-}
-
 function fieldLabel(field: ReviewReasonField): string {
   switch (field) {
     case "scope":
@@ -87,13 +70,7 @@ export function validateReviewReasonField(
       valid: false
     };
   }
-  if (
-    value.length === 0 ||
-    isCannedReason(value) ||
-    VAGUE_PATTERN.test(value) ||
-    (field === "scope" && AUTHORITY_ONLY_PATTERN.test(value)) ||
-    informativeCharacterCount(value) < MIN_INFORMATIVE_CHARACTERS
-  ) {
+  if (value.length === 0 || isCannedReason(value)) {
     return {
       message: `${fieldLabel(field)}が具体的ではありません。${fieldGuidance(field)}`,
       valid: false
