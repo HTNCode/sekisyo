@@ -1,5 +1,10 @@
 import { z } from "zod";
 
+import {
+  DEFAULT_REVIEW_STRICTNESS,
+  REVIEW_STRICTNESS_LEVELS
+} from "../domain/strictness.ts";
+
 const safeTextSchema = z
   .string()
   .trim()
@@ -84,6 +89,9 @@ export const SekisyoConfigSchema = z
   .object({
     version: z.literal(1).default(1),
     model: safeTextSchema.default("gpt-5.6-sol"),
+    strictness: z
+      .enum(REVIEW_STRICTNESS_LEVELS)
+      .default(DEFAULT_REVIEW_STRICTNESS),
     questions: QuestionsConfigSchema.default({
       count: 3,
       maxFollowUps: 2,

@@ -8,6 +8,7 @@ export const SEKISYO_CONFIG_FILE = ".sekisyo.yml";
 
 export const SEKISYO_CONFIG_TEMPLATE = `version: 1
 model: gpt-5.6-sol
+strictness: standard
 questions:
   count: 3
   maxFollowUps: 2

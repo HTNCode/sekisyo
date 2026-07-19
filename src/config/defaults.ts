@@ -3,6 +3,7 @@ import type { SekisyoConfig } from "./schema.ts";
 export const DEFAULT_CONFIG: SekisyoConfig = {
   version: 1,
   model: "gpt-5.6-sol",
+  strictness: "standard",
   questions: {
     count: 3,
     maxFollowUps: 2,

@@ -253,3 +253,5 @@ That answer does not establish the scope of impact. Explain the relevant callers
   developers understand the code AI writes, reviewers have the information they
   need to make decisions, and the resulting knowledge can be retained by the
   team.
+- For that reason, we would like to explore ways to increase the flexibility of
+  the model’s use and pursue more flexible customization options, if possible.

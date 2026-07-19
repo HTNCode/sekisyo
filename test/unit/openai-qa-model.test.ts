@@ -233,6 +233,45 @@ describe("OpenAIQaModel", () => {
     expect(client.requests).toHaveLength(1);
   });
 
+  test("既定のレビュー強度standardで回答を判定する", async () => {
+    const client = new FakeResponsesClient({
+      passed: true,
+      feedback: "具体的に説明できています",
+      missingConcept: null,
+      followUp: null
+    });
+    const model = new OpenAIQaModel(client);
+
+    await model.judgeAnswer({ answer: "401分岐で処理を止めます", question });
+
+    expect(client.prompts[0]?.instructions).toContain(
+      "レビュー強度はstandardです"
+    );
+  });
+
+  test.each([
+    ["light", "境界条件やトレードオフの網羅は要求せず"],
+    ["strict", "境界条件とトレードオフの両方"]
+  ] as const)(
+    "レビュー強度%sの合格基準で回答を判定する",
+    async (strictness, expectedCriteria) => {
+      const client = new FakeResponsesClient({
+        passed: true,
+        feedback: "具体的に説明できています",
+        missingConcept: null,
+        followUp: null
+      });
+      const model = new OpenAIQaModel(client, { strictness });
+
+      await model.judgeAnswer({ answer: "401分岐で処理を止めます", question });
+
+      expect(client.prompts[0]?.instructions).toContain(
+        `レビュー強度は${strictness}です`
+      );
+      expect(client.prompts[0]?.instructions).toContain(expectedCriteria);
+    }
+  );
+
   test("合格判定では不足概念と追撃質問を返さない", async () => {
     const model = new OpenAIQaModel(
       new FakeResponsesClient({
