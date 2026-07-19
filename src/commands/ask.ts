@@ -31,6 +31,6 @@ export async function runAskCommand(
     }
     return 1;
   } finally {
-    terminal.close();
+    await terminal.close();
   }
 }

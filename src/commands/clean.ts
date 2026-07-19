@@ -39,7 +39,7 @@ export async function runCleanCommand(
       );
     }
   } finally {
-    terminal?.close();
+    await terminal?.close();
   }
   if (!confirmed) {
     console.log("削除を取り消しました。");

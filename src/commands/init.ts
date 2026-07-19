@@ -67,7 +67,7 @@ export async function runInitCommand(
       console.log(aliasInstructions());
     }
   } finally {
-    terminal?.close();
+    await terminal?.close();
   }
   console.log("初期化しました。次に `sekisyo ask` を実行できます。");
   return 0;
