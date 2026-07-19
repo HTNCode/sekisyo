@@ -7,12 +7,15 @@ export interface SelectOption<T extends string> {
   readonly value: T;
 }
 
+type TerminalReadable = Readable & { readonly isTTY?: boolean };
+
 export class ConsoleTerminal {
   private readonly reader;
 
   public constructor(
-    input: Readable & { readonly isTTY?: boolean },
-    private readonly output: Writable
+    private readonly input: TerminalReadable,
+    private readonly output: Writable,
+    private readonly ownsStreams = false
   ) {
     // CONIN$ や /dev/tty を fs ストリームで開いた場合は raw モードに
     // 切り替えられず、コンソールのネイティブエコーと readline のエコーが
@@ -80,8 +83,18 @@ export class ConsoleTerminal {
     }
   }
 
-  public close(): void {
+  public async close(): Promise<void> {
     this.reader.close();
+    if (!this.ownsStreams) {
+      return;
+    }
+    // 自前で開いた端末ストリームを解放しないとイベントループが終了せず、
+    // pre-pushフックがgit pushをブロックし続ける。
+    this.input.destroy();
+    await new Promise<void>((resolve) => {
+      this.output.once("error", () => resolve());
+      this.output.end(() => resolve());
+    });
   }
 }
 
@@ -100,7 +113,7 @@ function openControllingTerminal(): ConsoleTerminal | undefined {
       autoClose: true,
       fd: outputFd
     });
-    return new ConsoleTerminal(input, output);
+    return new ConsoleTerminal(input, output, true);
   } catch {
     return undefined;
   }

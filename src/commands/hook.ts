@@ -24,7 +24,7 @@ export interface PrePushHookInput {
 }
 
 interface HookTerminal extends Terminal {
-  close(): void;
+  close(): void | Promise<void>;
 }
 
 export interface PrePushHookRuntime {
@@ -117,6 +117,6 @@ export async function runPrePushHook(
     }
     return 0;
   } finally {
-    terminal?.close();
+    await terminal?.close();
   }
 }
