@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 脆弱性の報告 / Report a security vulnerability
+    url: https://github.com/HTNCode/sekisyo/security/advisories/new
+    about: セキュリティ上の問題は公開Issueではなく、こちらから非公開で報告してください。

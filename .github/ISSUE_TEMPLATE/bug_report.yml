@@ -1,0 +1,41 @@
+name: バグ報告 / Bug report
+description: 動作不良や想定外の挙動を報告する
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: 概要
+      description: 何が起きたかを簡潔に
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順
+      description: 再現に必要な手順やコマンド
+      placeholder: |
+        1. `sekisyo ...` を実行
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する挙動
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: 環境
+      description: OS / Bun のバージョン / Sekisyo のバージョンなど
+      placeholder: |
+        - OS: Windows 11
+        - Bun: 1.2.x
+        - Sekisyo: v0.x.x
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ・スクリーンショット
+      description: 機密情報（APIキーやトークン等）が含まれていないか確認してから貼り付けてください
