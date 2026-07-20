@@ -75,7 +75,9 @@ export class OpenAISdkResponsesClient implements OpenAIResponsesClient {
     return {
       failed: response.error !== null || response.status === "failed",
       incompleteReason: response.incomplete_details?.reason ?? null,
-      parsed: response.output_parsed,
+      // openai 6.48.0 の InferZodType は構造的推論のため、ジェネリックな
+      // Schema では z.output<Schema> との同一性を TS が証明できない
+      parsed: response.output_parsed as z.output<Schema> | null,
       refused: containsRefusal(response.output),
       status: response.status
     };
