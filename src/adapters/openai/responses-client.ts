@@ -8,6 +8,14 @@ import type { ModelPrompt } from "../../prompts/shared.ts";
 export type OpenAIReasoningEffort =
   "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
+type ParsedResponse = Awaited<ReturnType<OpenAI["responses"]["parse"]>>;
+
+// SDK のマイナー更新で reason が増減しても追随できるよう、リテラルを直書き
+// せず incomplete_details から導出する
+export type OpenAIIncompleteReason = NonNullable<
+  NonNullable<ParsedResponse["incomplete_details"]>["reason"]
+>;
+
 export interface StructuredResponseRequest<Schema extends z.ZodType> {
   readonly maxOutputTokens: number;
   readonly model: string;
@@ -20,7 +28,7 @@ export interface StructuredResponseRequest<Schema extends z.ZodType> {
 
 export interface StructuredResponse<Output> {
   readonly failed: boolean;
-  readonly incompleteReason: "content_filter" | "max_output_tokens" | null;
+  readonly incompleteReason: OpenAIIncompleteReason | null;
   readonly parsed: Output | null;
   readonly refused: boolean;
   readonly status: ResponseStatus | undefined;
@@ -33,9 +41,7 @@ export interface OpenAIResponsesClient {
   ): Promise<StructuredResponse<z.output<Schema>>>;
 }
 
-function containsRefusal(
-  output: Awaited<ReturnType<OpenAI["responses"]["parse"]>>["output"]
-): boolean {
+function containsRefusal(output: ParsedResponse["output"]): boolean {
   return output.some(
     (item) =>
       item.type === "message" &&
@@ -75,7 +81,7 @@ export class OpenAISdkResponsesClient implements OpenAIResponsesClient {
     return {
       failed: response.error !== null || response.status === "failed",
       incompleteReason: response.incomplete_details?.reason ?? null,
-      // openai 6.48.0 の InferZodType は構造的推論のため、ジェネリックな
+      // openai 7.x の InferZodType は構造的推論のため、ジェネリックな
       // Schema では z.output<Schema> との同一性を TS が証明できない
       parsed: response.output_parsed as z.output<Schema> | null,
       refused: containsRefusal(response.output),
