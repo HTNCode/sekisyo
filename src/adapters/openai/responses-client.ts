@@ -5,6 +5,8 @@ import type { z } from "zod";
 
 import type { ModelPrompt } from "../../prompts/shared.ts";
 
+// 送る側の値なので SDK が選択肢を増やしても壊れない。受ける側の
+// incompleteReason とはリスクの向きが逆なため、こちらは直書きのままとする
 export type OpenAIReasoningEffort =
   "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
