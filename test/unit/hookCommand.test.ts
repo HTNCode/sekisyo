@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Readable, Writable } from "node:stream";
+import { PassThrough, Readable, Writable } from "node:stream";
 
 import type {
   GateDependencies,
@@ -153,6 +153,7 @@ const model: QaModel = {
     verification: []
   })
 };
+const QUESTION_PROMPT = "空の入力ではどう動きますか?";
 /** 試問まで進ませ、端末のpromptに到達させるモデル */
 const questioningModel: QaModel = {
   ...model,
@@ -162,11 +163,51 @@ const questioningModel: QaModel = {
       evidence: ["file.ts:1"],
       id: "q-1",
       learningObjective: "境界条件を説明できる",
-      prompt: "空の入力ではどう動きますか?",
+      prompt: QUESTION_PROMPT,
       rubric: ["空の場合の分岐を説明する"]
     }
   ]
 };
+
+/**
+ * 実際のrunGateと実端末でpre-pushを動かし、ハングせずGateErrorで中断することを
+ * 確かめる。ハングは解決しないPromiseになるため、タイムアウトと区別して落とす。
+ */
+async function expectHookAborts(terminal: ConsoleTerminal): Promise<void> {
+  const prepared = context(new MemorySessionStore(null));
+  const hook = runPrePushHook(
+    {
+      cwd: "C:\\repo",
+      remote: "origin",
+      stdin: `refs/heads/feature ${HEAD_OID} refs/heads/feature ${ZERO_OID}\n`
+    },
+    {
+      createDependencies: (gateContext, gateTerminal) =>
+        createGateDependencies(gateContext, gateTerminal, {
+          createAnalyzer: () => analyzer,
+          createModel: () => questioningModel
+        }),
+      createTerminal: () => terminal,
+      prepareContext: async () => prepared,
+      resolveCommit: async () => HEAD_OID,
+      runGate
+    }
+  );
+
+  const timer = Promise.withResolvers<never>();
+  const handle = setTimeout(
+    () => timer.reject(new Error("pre-pushがハングしました。")),
+    5_000
+  );
+  try {
+    await expect(Promise.race([hook, timer.promise])).rejects.toMatchObject({
+      code: "interactive_input_closed",
+      name: "GateError"
+    });
+  } finally {
+    clearTimeout(handle);
+  }
+}
 
 describe("runPrePushHook", () => {
   test("cache hitではanalyzer/model factoryと端末を生成しない", async () => {
@@ -255,49 +296,32 @@ describe("runPrePushHook", () => {
     expect(terminal.closed).toBeTrue();
   });
 
-  test("端末がEOFのとき実gateはハングせずメッセージ付きで中断する", async () => {
-    const store = new MemorySessionStore(null);
-    const prepared = context(store);
+  test("質問到達前に入力が閉じている実端末では内部エラーを漏らさず中断する", async () => {
+    // 修正前はreadlineの内部エラー（readline was closed）がそのまま漏れていた
     const discard = new Writable({
       write(_chunk, _encoding, callback) {
         callback();
       }
     });
-    // 入力がEOFの実端末。修正前はここでpromptが解決せずpushがブロックされた。
-    const terminal = new ConsoleTerminal(Readable.from([]), discard);
 
-    const hook = runPrePushHook(
-      {
-        cwd: "C:\\repo",
-        remote: "origin",
-        stdin: `refs/heads/feature ${HEAD_OID} refs/heads/feature ${ZERO_OID}\n`
-      },
-      {
-        createDependencies: (gateContext, gateTerminal) =>
-          createGateDependencies(gateContext, gateTerminal, {
-            createAnalyzer: () => analyzer,
-            createModel: () => questioningModel
-          }),
-        createTerminal: () => terminal,
-        prepareContext: async () => prepared,
-        resolveCommit: async () => HEAD_OID,
-        runGate
+    await expectHookAborts(new ConsoleTerminal(Readable.from([]), discard));
+  });
+
+  test("質問の待機中にEOFになる実端末でもハングせず中断する", async () => {
+    // 修正前はここでpromptが解決せず、pre-pushがgit pushをブロックし続けた
+    const input = new PassThrough();
+    let ended = false;
+    const output = new Writable({
+      write(chunk: Buffer | string, _encoding, callback) {
+        // 質問文が書き出された時点でpromptは待機中。そこで入力を閉じる
+        if (!ended && chunk.toString().includes(QUESTION_PROMPT)) {
+          ended = true;
+          setImmediate(() => input.end());
+        }
+        callback();
       }
-    );
-
-    await expect(
-      Promise.race([
-        hook,
-        new Promise((_resolve, reject) => {
-          setTimeout(
-            () => reject(new Error("pre-pushがハングしました。")),
-            5_000
-          );
-        })
-      ])
-    ).rejects.toMatchObject({
-      code: "interactive_input_closed",
-      name: "GateError"
     });
+
+    await expectHookAborts(new ConsoleTerminal(input, output));
   });
 });
