@@ -18,6 +18,7 @@ import type {
   SessionStore,
   Terminal
 } from "../ports/index.ts";
+import { TerminalInputClosedError } from "../ports/index.ts";
 import { heading, muted, success, warning } from "../ui/format.ts";
 import { GateError } from "./errors.ts";
 import { excludedDiffPaths, resolveQuestionCategories } from "./policy.ts";
@@ -503,6 +504,27 @@ export async function runGate(
   config: SekisyoConfig,
   target: GateTarget,
   options: RunGateOptions = {}
+): Promise<SessionRecord> {
+  try {
+    return await runGateSession(dependencies, config, target, options);
+  } catch (error) {
+    if (!(error instanceof TerminalInputClosedError)) {
+      throw error;
+    }
+    // 入力がEOFになった時点で回答は得られない。セッションはfailedにせず
+    // 中断として扱い、未通過のままfail-closedで呼び出し元へ返す。
+    throw new GateError(
+      "interactive_input_closed",
+      "端末の入力が終了したため中断しました。pushせず、対話可能な端末で `sekisyo ask` を実行してください。"
+    );
+  }
+}
+
+async function runGateSession(
+  dependencies: GateDependencies,
+  config: SekisyoConfig,
+  target: GateTarget,
+  options: RunGateOptions
 ): Promise<SessionRecord> {
   const exactDiff = target.diff;
   if (exactDiff.trim().length === 0) {

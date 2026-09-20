@@ -24,6 +24,7 @@ import type {
   SessionStore,
   Terminal
 } from "../../../src/ports/index.ts";
+import { TerminalInputClosedError } from "../../../src/ports/index.ts";
 
 const analysis: DiffAnalysis = {
   attention: [
@@ -129,6 +130,36 @@ class ScriptedTerminal implements Terminal {
       throw new Error("No scripted selection remains.");
     }
     return value as Value;
+  }
+}
+
+/** promptとselectのどちらでEOFになっても中断できることを確かめるための端末 */
+class InputClosedTerminal implements Terminal {
+  public constructor(
+    private readonly closedOn: "prompt" | "select",
+    private readonly failure: Error = new TerminalInputClosedError()
+  ) {}
+
+  write(): void {}
+
+  error(): void {}
+
+  async prompt(): Promise<string> {
+    if (this.closedOn === "prompt") {
+      throw this.failure;
+    }
+    return "";
+  }
+
+  async confirm(): Promise<boolean> {
+    return true;
+  }
+
+  async select<Value extends string>(): Promise<Value> {
+    if (this.closedOn === "select") {
+      throw this.failure;
+    }
+    return "intentional" as Value;
   }
 }
 
@@ -596,6 +627,72 @@ describe("runGate", () => {
     ).rejects.toMatchObject({ code: "fix_requested" });
     expect(model.judgments).toHaveLength(2);
     expect([...store.records.values()][0]?.status).toBe("analyzed");
+  });
+
+  test("選択待ちで入力がEOFになるとGateErrorへ変換して中断する", async () => {
+    const store = new MemorySessionStore();
+
+    await expect(
+      runGate(
+        {
+          analyzer: new StaticAnalyzer(),
+          clock: () => "2026-07-18T12:00:00.000Z",
+          model: new ScriptedModel(),
+          store,
+          terminal: new InputClosedTerminal("select")
+        },
+        {
+          ...DEFAULT_CONFIG,
+          questions: { ...DEFAULT_CONFIG.questions, count: 1 }
+        },
+        target()
+      )
+    ).rejects.toMatchObject({ code: "interactive_input_closed" });
+    // 中断であって不合格ではないため、failedへは遷移させない
+    expect([...store.records.values()][0]?.status).toBe("analyzed");
+  });
+
+  test("説明の入力待ちで入力がEOFになるとGateErrorへ変換して中断する", async () => {
+    const store = new MemorySessionStore();
+
+    await expect(
+      runGate(
+        {
+          analyzer: new StaticAnalyzer(),
+          clock: () => "2026-07-18T12:00:00.000Z",
+          model: new ScriptedModel(),
+          store,
+          terminal: new InputClosedTerminal("prompt")
+        },
+        {
+          ...DEFAULT_CONFIG,
+          questions: { ...DEFAULT_CONFIG.questions, count: 1 }
+        },
+        target()
+      )
+    ).rejects.toMatchObject({ code: "interactive_input_closed" });
+    expect([...store.records.values()][0]?.status).toBe("analyzed");
+  });
+
+  test("EOF以外のエラーはGateErrorへ変換せずそのまま伝播する", async () => {
+    const failure = new Error("端末アダプタの想定外エラー");
+
+    await expect(
+      runGate(
+        {
+          analyzer: new StaticAnalyzer(),
+          clock: () => "2026-07-18T12:00:00.000Z",
+          model: new ScriptedModel(),
+          store: new MemorySessionStore(),
+          terminal: new InputClosedTerminal("select", failure)
+        },
+        {
+          ...DEFAULT_CONFIG,
+          questions: { ...DEFAULT_CONFIG.questions, count: 1 }
+        },
+        target()
+      )
+    ).rejects.toBe(failure);
   });
 
   test("理由入力中に:fixで修正へ切り替えられる", async () => {

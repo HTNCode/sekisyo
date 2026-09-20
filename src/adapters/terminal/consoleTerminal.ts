@@ -1,6 +1,7 @@
 import { createReadStream, createWriteStream, openSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
+import { TerminalInputClosedError } from "../../ports/terminal.ts";
 
 export interface SelectOption<T extends string> {
   readonly label: string;
@@ -11,6 +12,7 @@ type TerminalReadable = Readable & { readonly isTTY?: boolean };
 
 export class ConsoleTerminal {
   private readonly reader;
+  private inputClosed = false;
 
   public constructor(
     private readonly input: TerminalReadable,
@@ -25,6 +27,30 @@ export class ConsoleTerminal {
       output,
       terminal: input.isTTY === true
     });
+    this.reader.once("close", () => {
+      this.inputClosed = true;
+    });
+  }
+
+  /**
+   * readline の question() は入力がEOFになっても解決しないため、close イベントと
+   * レースさせてrejectする。これをしないとpre-pushフックがgit pushをブロックし続ける。
+   */
+  private async question(query: string): Promise<string> {
+    if (this.inputClosed) {
+      throw new TerminalInputClosedError();
+    }
+    let rejectOnClose = (): void => {};
+    const closed = new Promise<never>((_resolve, reject) => {
+      rejectOnClose = () => reject(new TerminalInputClosedError());
+    });
+    this.reader.once("close", rejectOnClose);
+    try {
+      // race がどちらの結果も購読するため、未処理のrejectionにはならない
+      return await Promise.race([this.reader.question(query), closed]);
+    } finally {
+      this.reader.off("close", rejectOnClose);
+    }
   }
 
   public write(message: string): void {
@@ -36,7 +62,7 @@ export class ConsoleTerminal {
   }
 
   public async prompt(message: string): Promise<string> {
-    return (await this.reader.question(`${message}\n> `)).trim();
+    return (await this.question(`${message}\n> `)).trim();
   }
 
   public async confirm(
@@ -44,7 +70,7 @@ export class ConsoleTerminal {
     defaultValue = false
   ): Promise<boolean> {
     const suffix = defaultValue ? "[Y/n]" : "[y/N]";
-    const answer = (await this.reader.question(`${message} ${suffix} `))
+    const answer = (await this.question(`${message} ${suffix} `))
       .trim()
       .toLowerCase();
     if (answer.length === 0) {

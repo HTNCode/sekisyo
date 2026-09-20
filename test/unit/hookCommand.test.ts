@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { Readable, Writable } from "node:stream";
 
 import type {
   GateDependencies,
   GateTarget
 } from "../../src/application/gate.ts";
-import { PROMPT_VERSION } from "../../src/application/gate.ts";
+import { PROMPT_VERSION, runGate } from "../../src/application/gate.ts";
+import { ConsoleTerminal } from "../../src/adapters/terminal/consoleTerminal.ts";
 import { DEFAULT_CONFIG, createPolicyDigest } from "../../src/config/index.ts";
 import { runPrePushHook } from "../../src/commands/hook.ts";
 import {
@@ -151,6 +153,20 @@ const model: QaModel = {
     verification: []
   })
 };
+/** 試問まで進ませ、端末のpromptに到達させるモデル */
+const questioningModel: QaModel = {
+  ...model,
+  generateQuestions: async () => [
+    {
+      category: "boundary",
+      evidence: ["file.ts:1"],
+      id: "q-1",
+      learningObjective: "境界条件を説明できる",
+      prompt: "空の入力ではどう動きますか?",
+      rubric: ["空の場合の分岐を説明する"]
+    }
+  ]
+};
 
 describe("runPrePushHook", () => {
   test("cache hitではanalyzer/model factoryと端末を生成しない", async () => {
@@ -237,5 +253,51 @@ describe("runPrePushHook", () => {
     expect(receivedOptions).toEqual({ allowReuse: false });
     expect(store.loadCalls).toBe(1);
     expect(terminal.closed).toBeTrue();
+  });
+
+  test("端末がEOFのとき実gateはハングせずメッセージ付きで中断する", async () => {
+    const store = new MemorySessionStore(null);
+    const prepared = context(store);
+    const discard = new Writable({
+      write(_chunk, _encoding, callback) {
+        callback();
+      }
+    });
+    // 入力がEOFの実端末。修正前はここでpromptが解決せずpushがブロックされた。
+    const terminal = new ConsoleTerminal(Readable.from([]), discard);
+
+    const hook = runPrePushHook(
+      {
+        cwd: "C:\\repo",
+        remote: "origin",
+        stdin: `refs/heads/feature ${HEAD_OID} refs/heads/feature ${ZERO_OID}\n`
+      },
+      {
+        createDependencies: (gateContext, gateTerminal) =>
+          createGateDependencies(gateContext, gateTerminal, {
+            createAnalyzer: () => analyzer,
+            createModel: () => questioningModel
+          }),
+        createTerminal: () => terminal,
+        prepareContext: async () => prepared,
+        resolveCommit: async () => HEAD_OID,
+        runGate
+      }
+    );
+
+    await expect(
+      Promise.race([
+        hook,
+        new Promise((_resolve, reject) => {
+          setTimeout(
+            () => reject(new Error("pre-pushがハングしました。")),
+            5_000
+          );
+        })
+      ])
+    ).rejects.toMatchObject({
+      code: "interactive_input_closed",
+      name: "GateError"
+    });
   });
 });
