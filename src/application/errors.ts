@@ -1,6 +1,7 @@
 export type GateErrorCode =
   | "fix_requested"
   | "follow_ups_exhausted"
+  | "interactive_input_closed"
   | "interactive_terminal_required"
   | "no_changes"
   | "privacy_exclusion"
