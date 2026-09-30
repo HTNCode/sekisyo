@@ -181,13 +181,23 @@ describe("assertSafePublicationInput: 散文と融合した実在の値の見逃
   });
 
   test("不可視文字を挟んだ値でも検出する", () => {
-    for (const intent of [
-      "password: Hunter2xyz789​",
-      "password: Hunter2­xyz789",
-      "api_key = Ab12Cd34Ef‍Gh78",
-      "password: Hunt​er2xyz​789"
+    for (const invisible of [
+      "­", // SOFT HYPHEN
+      "​", // ZERO WIDTH SPACE
+      "‍", // ZERO WIDTH JOINER
+      "⁠", // WORD JOINER
+      "﻿", // ZERO WIDTH NO-BREAK SPACE
+      "͏", // COMBINING GRAPHEME JOINER
+      "︀", // VARIATION SELECTOR-1
+      "⁡", // FUNCTION APPLICATION
+      "؜", // ARABIC LETTER MARK
+      "᠎", // MONGOLIAN VOWEL SEPARATOR
+      "ㅤ" // HANGUL FILLER
     ]) {
-      expectBlocked(withIntent(intent), "credential assignment");
+      expectBlocked(
+        withIntent(`password: Hunter2${invisible}xyz789`),
+        "credential assignment"
+      );
     }
   });
 
@@ -216,6 +226,19 @@ describe("assertSafePublicationInput: 散文と融合した実在の値の見逃
     ]) {
       expectAccepted(withIntent(intent));
     }
+  });
+
+  // 既知の穴。非 ASCII が混ざると、空白区切りの ASCII 語（パスフレーズ）は
+  // 8文字以上の連続を作らないため検知できない。純 ASCII なら検知する。
+  // この穴を塞いだときに必ず落ちるよう、現状の境界をここで固定する。
+  test("既知の穴: 非 ASCII が混ざる空白区切りのパスフレーズは検知しない", () => {
+    expectBlocked(
+      withIntent('password: "correct horse battery staple"'),
+      "credential assignment"
+    );
+    expectAccepted(
+      withIntent('password: "本番は correct horse battery staple"')
+    );
   });
 });
 

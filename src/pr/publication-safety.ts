@@ -8,7 +8,8 @@ const ENVIRONMENT_REFERENCE_PATTERN =
   /^(?:\$\{[a-z_][a-z0-9_]*\}|\$[a-z_][a-z0-9_]*|%[a-z_][a-z0-9_]*%|(?:process\.)?env\.[a-z_][a-z0-9_]*)$/iu;
 const MASKED_VALUE_PATTERN = /^[*x]{3,}$/iu;
 // 不可視文字は値を分断して検知を回避できるため、判定前に取り除く。
-const IGNORABLE_CHARACTER_PATTERN = /[\u00ad\u200b-\u200f\u2060\ufeff]/gu;
+// 個別列挙では異体字セレクタなどを取りこぼすため Unicode の property で指定する。
+const IGNORABLE_CHARACTER_PATTERN = /\p{Default_Ignorable_Code_Point}/gu;
 // 資格情報として扱う代入値の条件。日本語などの散文をまるごと値として拾う誤検知を
 // 防ぐため、値全体が ASCII 印字可能文字であるか、資格情報らしい長さの ASCII 連続を
 // 含むものに限る。実在の値の直後に日本語が続いて1つのキャプチャに融合した場合も
