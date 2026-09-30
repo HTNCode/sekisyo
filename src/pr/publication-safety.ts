@@ -7,6 +7,9 @@ const CREDENTIAL_URL_PATTERN = /\bhttps?:\/\/[^\s/:@]+:([^\s/@]+)@[^\s]+/giu;
 const ENVIRONMENT_REFERENCE_PATTERN =
   /^(?:\$\{[a-z_][a-z0-9_]*\}|\$[a-z_][a-z0-9_]*|%[a-z_][a-z0-9_]*%|(?:process\.)?env\.[a-z_][a-z0-9_]*)$/iu;
 const MASKED_VALUE_PATTERN = /^[*x]{3,}$/iu;
+// 資格情報として扱う代入値は ASCII 印字可能文字のみで構成されるものに限る。
+// 日本語などの散文を値として拾う誤検知を防ぐため。
+const ASCII_PRINTABLE_VALUE_PATTERN = /^[\u0020-\u007e]+$/u;
 const SAFE_SECRET_PLACEHOLDERS: ReadonlySet<string> = new Set([
   "absent",
   "api key",
@@ -146,6 +149,10 @@ function assignedSecretValue(match: RegExpMatchArray): string {
   return match.slice(1).find((value) => value !== undefined) ?? "";
 }
 
+function looksLikeCredentialValue(value: string): boolean {
+  return ASCII_PRINTABLE_VALUE_PATTERN.test(value);
+}
+
 function isSafePlaceholder(value: string): boolean {
   const normalized = value
     .trim()
@@ -180,7 +187,11 @@ function secretKind(value: string): string | undefined {
 
   for (const match of normalized.matchAll(SECRET_ASSIGNMENT_PATTERN)) {
     const assignedValue = assignedSecretValue(match);
-    if (assignedValue.length > 0 && !isSafePlaceholder(assignedValue)) {
+    if (
+      assignedValue.length > 0 &&
+      looksLikeCredentialValue(assignedValue) &&
+      !isSafePlaceholder(assignedValue)
+    ) {
       return "credential assignment";
     }
   }
