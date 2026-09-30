@@ -159,11 +159,80 @@ describe("assertSafePublicationInput: 日本語散文の誤検知", () => {
   });
 });
 
+describe("assertSafePublicationInput: 散文と融合した実在の値の見逃し防止", () => {
+  test("値の直後に空白なしで日本語が続いても検出する", () => {
+    for (const intent of [
+      "token=AbCd1234EfGh5678は無効化済みです",
+      "password:Hunter2xyz789を使っていました",
+      "client_secret=s3cr3tV4lu3xyz。"
+    ]) {
+      expectBlocked(withIntent(intent), "credential assignment");
+    }
+  });
+
+  test("非 ASCII を含む引用値でも ASCII の連続を検出する", () => {
+    for (const intent of [
+      'password: "Pässwort123!secret"',
+      'password: "секрет-Abc123xyz789"',
+      'api_key = "本番: Ab12Cd34Ef56Gh78"'
+    ]) {
+      expectBlocked(withIntent(intent), "credential assignment");
+    }
+  });
+
+  test("不可視文字を挟んだ値でも検出する", () => {
+    for (const intent of [
+      "password: Hunter2xyz789​",
+      "password: Hunter2­xyz789",
+      "api_key = Ab12Cd34Ef‍Gh78",
+      "password: Hunt​er2xyz​789"
+    ]) {
+      expectBlocked(withIntent(intent), "credential assignment");
+    }
+  });
+
+  test("空白で区切られた ASCII の値は散文中でも検出する", () => {
+    expectBlocked(
+      withIntent("変更後の値は password: Hunter2xyz789 です"),
+      "credential assignment"
+    );
+  });
+
+  // 資格情報とみなす ASCII 連続の最小長（8文字）を両側から固定する。
+  // 短い側は、日本語散文に混ざる短い英数字（単位や桁数の説明）を
+  // 秘密情報として扱わないための境界。
+  test("8文字の ASCII 連続は検出する", () => {
+    expectBlocked(
+      withIntent("password: Ab12Cd34は再発行済みです"),
+      "credential assignment"
+    );
+  });
+
+  test("7文字以下の ASCII 連続しか含まない散文は許可する", () => {
+    for (const intent of [
+      "password: Ab12Cd3は再発行済みです",
+      "token: 有効期限は24hです",
+      "secret: 値は3文字ぶん短縮しました"
+    ]) {
+      expectAccepted(withIntent(intent));
+    }
+  });
+});
+
 describe("assertSafePublicationInput: 制御文字", () => {
   test("安全でない制御文字を拒否する", () => {
-    expect(() => {
-      assertSafePublicationInput(withIntent("変更意図\u0000です"));
-    }).toThrow("安全でない制御文字");
+    for (const control of [
+      "\u0000",
+      "\u0008",
+      "\u000b",
+      "\u000c",
+      "\u001f",
+      "\u007f"
+    ]) {
+      expect(() => {
+        assertSafePublicationInput(withIntent(`変更意図${control}です`));
+      }).toThrow("安全でない制御文字");
+    }
   });
 
   test("改行とタブは許可する", () => {
