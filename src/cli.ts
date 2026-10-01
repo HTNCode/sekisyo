@@ -64,15 +64,19 @@ function parseOptions(
     }
     if (valueOptions.has(option)) {
       const value = args[index + 1];
+      if (value === undefined) {
+        throw new Error(`${option} には値が必要です。${HELP_HINT}`);
+      }
       // 既知のオプション名（-h / -v のような短縮形も含む）を値として飲み込むと、
-      // 解析を素通りして副作用のあるコマンドが走るため、値欠落として弾く。
+      // 解析を素通りして副作用のあるコマンドが走るため、ここで弾く。
       if (
-        value === undefined ||
         value.startsWith("--") ||
         booleanOptions.has(value) ||
         valueOptions.has(value)
       ) {
-        throw new Error(`${option} には値が必要です。${HELP_HINT}`);
+        throw new Error(
+          `${option} の値に別のオプション ${value} が来ています。${option} の値を指定してください。${HELP_HINT}`
+        );
       }
       values.set(option, value);
       index += 1;

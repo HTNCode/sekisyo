@@ -170,17 +170,18 @@ describe("Sekisyo CLI のオプション検査", () => {
    * 短縮形まで弾かないと、オプション解析を素通りして本物の gh / git を呼ぶ
    * `pr` まで到達する。値欠落として弾まることを位置ごとに固定する。
    */
-  test("値の位置に現れた既知オプションは値ではなく値欠落として扱う", async () => {
+  test("値の位置に現れた既知オプションは値として受け付けない", async () => {
     const cwd = await createScratchDirectory();
+    const cases: readonly (readonly [readonly string[], string])[] = [
+      [["pr", "--title", "--help"], "--title の値に別のオプション --help"],
+      [["pr", "--title", "-h"], "--title の値に別のオプション -h"],
+      [["pr", "--title", "-v"], "--title の値に別のオプション -v"],
+      [["pr", "--base", "--title"], "--base の値に別のオプション --title"],
+      [["ask", "--base", "--force"], "--base の値に別のオプション --force"]
+    ];
 
-    for (const args of [
-      ["pr", "--title", "--help"],
-      ["pr", "--title", "-h"],
-      ["pr", "--title", "-v"],
-      ["pr", "--base", "--title"],
-      ["ask", "--base", "--force"]
-    ]) {
-      await expect(runCli(args, cwd)).rejects.toThrow("には値が必要です。");
+    for (const [args, message] of cases) {
+      await expect(runCli(args, cwd)).rejects.toThrow(message);
     }
   });
 

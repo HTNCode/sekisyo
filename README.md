@@ -100,10 +100,10 @@ transfers the explanation record to the pull request body.
 
 `init`, `ask`, `status`, `pr`, and `clean` accept `--help` and `--version` in
 any position, so `sekisyo status --help` prints the usage text and exits with 0.
-The internal `hook` subcommand is not covered: it accepts `--help` only directly
-after `hook`, so that `sekisyo hook pre-push` can never be turned into a
-successful no-op that skips the gate. Arguments after `sekisyo git` and after an
-unknown Git command are always handed to the real Git untouched.
+The internal `hook` subcommand is not covered: it accepts `--help` or `-h` only
+directly after `hook`, so that `sekisyo hook pre-push` can never be turned into
+a successful no-op that skips the gate. Arguments after `sekisyo git` and after
+an unknown Git command are always handed to the real Git untouched.
 
 The hook starts the interactive examination when a terminal is available. A push
 from an IDE or another non-interactive process fails safely and explains how to
