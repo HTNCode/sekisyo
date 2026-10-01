@@ -152,7 +152,7 @@ async function promptReviewReasonField(
     if (validation.valid) {
       return validation.value;
     }
-    terminal.write(warning(validation.message));
+    terminal.write(warning(validation.message, terminal.colorTarget));
     failedAttempts += 1;
     if (failedAttempts < MAX_REVIEW_REASON_ATTEMPTS_BEFORE_CHOICE) {
       continue;
@@ -243,7 +243,12 @@ async function resolveFindings(
   }
 
   const terminal = requireTerminal(dependencies);
-  terminal.write(heading(`一次セルフレビュー ${analysis.findings.length}件`));
+  terminal.write(
+    heading(
+      `一次セルフレビュー ${analysis.findings.length}件`,
+      terminal.colorTarget
+    )
+  );
   let current = session;
 
   for (const [index, finding] of analysis.findings.entries()) {
@@ -252,7 +257,9 @@ async function resolveFindings(
         `      ${finding.title}\n      ${finding.explanation}`
     );
     if (finding.suggestion !== undefined) {
-      terminal.write(muted(`      提案: ${finding.suggestion}`));
+      terminal.write(
+        muted(`      提案: ${finding.suggestion}`, terminal.colorTarget)
+      );
     }
     const action = await terminal.select("この指摘をどう扱いますか?", [
       {
@@ -286,15 +293,20 @@ async function resolveFindings(
       assertJudgmentCorrelation(judgment);
       terminal.write(
         judgment.passed
-          ? success(`説明確認: ${judgment.feedback}`)
-          : warning(`説明を再確認してください: ${judgment.feedback}`)
+          ? success(`説明確認: ${judgment.feedback}`, terminal.colorTarget)
+          : warning(
+              `説明を再確認してください: ${judgment.feedback}`,
+              terminal.colorTarget
+            )
       );
       if (judgment.passed) {
         reason = candidate;
         break;
       }
       if (judgment.followUp !== undefined) {
-        terminal.write(muted(`確認ポイント: ${judgment.followUp}`));
+        terminal.write(
+          muted(`確認ポイント: ${judgment.followUp}`, terminal.colorTarget)
+        );
       }
     }
     if (reason === undefined) {
@@ -399,13 +411,15 @@ async function askOneQuestion(
   for (let followUpCount = 0; ; followUpCount += 1) {
     terminal.write(
       `\n[${question.category}] ${question.prompt}\n` +
-        muted(`ねらい: ${question.learningObjective}`)
+        muted(`ねらい: ${question.learningObjective}`, terminal.colorTarget)
     );
     let answer = "";
     while (answer.length === 0) {
       answer = await terminal.prompt("あなたの説明");
       if (answer.length === 0) {
-        terminal.write(warning("回答を入力してください。"));
+        terminal.write(
+          warning("回答を入力してください。", terminal.colorTarget)
+        );
       }
     }
     const judgment = await dependencies.model.judgeAnswer({
@@ -433,8 +447,8 @@ async function askOneQuestion(
     await dependencies.store.save(current);
     terminal.write(
       judgment.passed
-        ? success(`通過: ${judgment.feedback}`)
-        : warning(`再確認: ${judgment.feedback}`)
+        ? success(`通過: ${judgment.feedback}`, terminal.colorTarget)
+        : warning(`再確認: ${judgment.feedback}`, terminal.colorTarget)
     );
     if (judgment.passed) {
       return current;
@@ -632,7 +646,9 @@ async function runGateSession(
   session = await saveTransition(dependencies, session, "questioning", {
     questions: [...questions]
   });
-  terminal.write(heading(`口頭試問 ${questions.length}問`));
+  terminal.write(
+    heading(`口頭試問 ${questions.length}問`, terminal.colorTarget)
+  );
 
   for (const question of questions) {
     session = await askOneQuestion(
@@ -643,8 +659,13 @@ async function runGateSession(
     );
   }
   session = await saveTransition(dependencies, session, "passed");
-  terminal.write(heading("通過"));
-  terminal.write(success("説明責任の記録を保存しました。pushを続行できます。"));
+  terminal.write(heading("通過", terminal.colorTarget));
+  terminal.write(
+    success(
+      "説明責任の記録を保存しました。pushを続行できます。",
+      terminal.colorTarget
+    )
+  );
   return session;
 }
 

@@ -1,9 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { runCli } from "../../src/cli.ts";
+import { SEKISYO_VERSION } from "../../src/version.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -16,6 +17,15 @@ async function createEmptyGitConfig(): Promise<{
   const configPath = join(cwd, "empty.gitconfig");
   await writeFile(configPath, "", "utf8");
   return { configPath, cwd };
+}
+
+/** console.log の出力を集める。runCli はヘルプと版を console.log に書く。 */
+function captureLog(): { readonly lines: () => string; restore: () => void } {
+  const lines: string[] = [];
+  const spy = spyOn(console, "log").mockImplementation((...args: unknown[]) => {
+    lines.push(args.map((value) => String(value)).join(" "));
+  });
+  return { lines: () => lines.join("\n"), restore: () => spy.mockRestore() };
 }
 
 afterEach(async () => {
@@ -71,4 +81,87 @@ describe("Sekisyo CLI Git passthrough", () => {
     expect(exitCode).toBe(1);
     expect(stderr).toBe("");
   }, 15_000);
+});
+
+describe("Sekisyo CLI のヘルプと版表示", () => {
+  test("コマンドなし・help・--help・-h はヘルプを表示して0で終了する", async () => {
+    const log = captureLog();
+    try {
+      for (const args of [[], ["help"], ["--help"], ["-h"]]) {
+        expect(await runCli(args, process.cwd())).toBe(0);
+      }
+    } finally {
+      log.restore();
+    }
+
+    expect(log.lines()).toContain("使い方:");
+    expect(log.lines()).toContain("終了コード:");
+  });
+
+  test("サブコマンドの後ろの --help / -h でもヘルプを表示して0で終了する", async () => {
+    const log = captureLog();
+    try {
+      expect(await runCli(["status", "--help"], process.cwd())).toBe(0);
+      expect(await runCli(["status", "-h"], process.cwd())).toBe(0);
+      expect(await runCli(["clean", "--all", "--help"], process.cwd())).toBe(0);
+      expect(
+        await runCli(["pr", "--base", "main", "--help"], process.cwd())
+      ).toBe(0);
+    } finally {
+      log.restore();
+    }
+
+    expect(log.lines()).toContain("使い方:");
+  });
+
+  test("サブコマンドの後ろの --version / -v でも版を表示して0で終了する", async () => {
+    const log = captureLog();
+    try {
+      expect(await runCli(["--version"], process.cwd())).toBe(0);
+      expect(await runCli(["ask", "--version"], process.cwd())).toBe(0);
+      expect(await runCli(["status", "-v"], process.cwd())).toBe(0);
+    } finally {
+      log.restore();
+    }
+
+    expect(log.lines()).toContain(`sekisyo ${SEKISYO_VERSION}`);
+  });
+
+  test("git passthroughの引数は横取りしない", async () => {
+    const log = captureLog();
+    try {
+      // 本物のgitが応答するため、sekisyo自身の版は console.log へ出ない
+      expect(await runCli(["git", "--version"], process.cwd())).toBe(0);
+    } finally {
+      log.restore();
+    }
+
+    expect(log.lines()).not.toContain(`sekisyo ${SEKISYO_VERSION}`);
+  });
+});
+
+describe("Sekisyo CLI のオプション検査", () => {
+  test("不明なオプションはヘルプへ誘導して失敗する", async () => {
+    await expect(runCli(["status", "--bogus"], process.cwd())).rejects.toThrow(
+      "不明なオプションです: --bogus `sekisyo --help` で使い方を確認できます。"
+    );
+  });
+
+  test("値を取るオプションの値欠落はヘルプへ誘導して失敗する", async () => {
+    await expect(runCli(["ask", "--base"], process.cwd())).rejects.toThrow(
+      "--base には値が必要です。`sekisyo --help` で使い方を確認できます。"
+    );
+  });
+
+  test("値の位置に現れた --help はヘルプではなく値欠落として扱う", async () => {
+    await expect(
+      runCli(["pr", "--title", "--help"], process.cwd())
+    ).rejects.toThrow("--title には値が必要です。");
+  });
+
+  test("--show-alias と --no-alias の同時指定は失敗する", async () => {
+    await expect(
+      runCli(["init", "--show-alias", "--no-alias"], process.cwd())
+    ).rejects.toThrow("--show-alias と --no-alias は同時に指定できません。");
+  });
 });

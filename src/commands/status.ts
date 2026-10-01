@@ -1,3 +1,4 @@
+import { EXIT_CODE } from "../application/errors.ts";
 import { PROMPT_VERSION } from "../application/gate.ts";
 import type { SessionRecord } from "../domain/session.ts";
 import type { GateTarget } from "../application/gate.ts";
@@ -34,7 +35,7 @@ export async function runStatusCommand(cwd: string): Promise<number> {
   if (sessions.length === 0) {
     console.log("現在のHEADに対応するSekisyo記録はありません。");
     console.log("`sekisyo ask` で口頭試問を開始してください。");
-    return 1;
+    return EXIT_CODE.failure;
   }
 
   console.log(`HEAD ${target.head}`);
@@ -68,6 +69,6 @@ export async function runStatusCommand(cwd: string): Promise<number> {
       isCurrentSession(session, config, target, target.diffDigest) &&
       (session.status === "passed" || session.status === "summarized")
   )
-    ? 0
-    : 1;
+    ? EXIT_CODE.success
+    : EXIT_CODE.failure;
 }

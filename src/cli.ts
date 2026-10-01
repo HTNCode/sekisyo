@@ -6,12 +6,13 @@ import {
   runPrCommand,
   runStatusCommand
 } from "./commands/index.ts";
+import { EXIT_CODE } from "./application/errors.ts";
 import { SEKISYO_VERSION } from "./version.ts";
 
 const HELP = `Sekisyo CLI — AI生成コードを説明責任つきでレビューへ届ける関所
 
 使い方:
-  sekisyo init [--show-alias]
+  sekisyo init [--show-alias | --no-alias]
   sekisyo ask [--base <ref>] [--force]
   sekisyo status
   sekisyo pr [--base <branch>] [--title <title>]
@@ -19,11 +20,24 @@ const HELP = `Sekisyo CLI — AI生成コードを説明責任つきでレビュ
   sekisyo git <git args...>
   sekisyo <unknown git command...>
 
+いずれのサブコマンドでも --help / --version を受け付けます。
+
 pre-pushフック内部:
   sekisyo hook pre-push <remote> <url>
 
 \`git push --no-verify\` によるバイパスはGitの公式仕様どおり利用できます。
+
+終了コード:
+  0 正常終了
+  1 未通過、または一般的な失敗
+  2 利用者が中断した
+  3 実行環境に起因する中断（対話端末がない、入力がEOFに達した）
+  4 設定・方針に起因する中断
 `;
+
+const HELP_OPTIONS: readonly string[] = ["--help", "-h"];
+const VERSION_OPTIONS: readonly string[] = ["--version", "-v"];
+const HELP_HINT = "`sekisyo --help` で使い方を確認できます。";
 
 interface ParsedOptions {
   readonly flags: ReadonlySet<string>;
@@ -50,15 +64,44 @@ function parseOptions(
     if (valueOptions.has(option)) {
       const value = args[index + 1];
       if (value === undefined || value.startsWith("--")) {
-        throw new Error(`${option} には値が必要です。`);
+        throw new Error(`${option} には値が必要です。${HELP_HINT}`);
       }
       values.set(option, value);
       index += 1;
       continue;
     }
-    throw new Error(`不明なオプションです: ${option}`);
+    throw new Error(`不明なオプションです: ${option} ${HELP_HINT}`);
   }
   return { flags, values };
+}
+
+/**
+ * --help / --version はサブコマンドの後ろでも受け付ける。値を取るオプションの
+ * 値として現れた `--help` を拾わないよう、判定はパース結果に対して行う。
+ */
+function parseCommandOptions(
+  args: readonly string[],
+  valueOptions: ReadonlySet<string>,
+  booleanOptions: ReadonlySet<string>
+): ParsedOptions {
+  return parseOptions(
+    args,
+    valueOptions,
+    new Set([...booleanOptions, ...HELP_OPTIONS, ...VERSION_OPTIONS])
+  );
+}
+
+/** --help / --version が指定されていれば出力して終了コードを返す。 */
+function helpOrVersionExit(flags: ReadonlySet<string>): number | undefined {
+  if (HELP_OPTIONS.some((option) => flags.has(option))) {
+    console.log(HELP);
+    return EXIT_CODE.success;
+  }
+  if (VERSION_OPTIONS.some((option) => flags.has(option))) {
+    console.log(`sekisyo ${SEKISYO_VERSION}`);
+    return EXIT_CODE.success;
+  }
+  return undefined;
 }
 
 async function passthroughGit(
@@ -86,45 +129,68 @@ export async function runCli(
   if (
     command === undefined ||
     command === "help" ||
-    command === "--help" ||
-    command === "-h"
+    HELP_OPTIONS.includes(command)
   ) {
     console.log(HELP);
-    return 0;
+    return EXIT_CODE.success;
   }
-  if (command === "--version" || command === "-v") {
+  if (VERSION_OPTIONS.includes(command)) {
     console.log(`sekisyo ${SEKISYO_VERSION}`);
-    return 0;
+    return EXIT_CODE.success;
   }
 
   switch (command) {
     case "init": {
-      const options = parseOptions(rest, new Set(), new Set(["--show-alias"]));
-      return runInitCommand(cwd, {
-        showAlias: options.flags.has("--show-alias")
-      });
+      const options = parseCommandOptions(
+        rest,
+        new Set(),
+        new Set(["--show-alias", "--no-alias"])
+      );
+      const early = helpOrVersionExit(options.flags);
+      if (early !== undefined) {
+        return early;
+      }
+      const showAlias = options.flags.has("--show-alias");
+      const noAlias = options.flags.has("--no-alias");
+      if (showAlias && noAlias) {
+        throw new Error("--show-alias と --no-alias は同時に指定できません。");
+      }
+      return runInitCommand(cwd, { noAlias, showAlias });
     }
     case "ask": {
-      const options = parseOptions(
+      const options = parseCommandOptions(
         rest,
         new Set(["--base"]),
         new Set(["--force"])
       );
+      const early = helpOrVersionExit(options.flags);
+      if (early !== undefined) {
+        return early;
+      }
       const base = options.values.get("--base");
       return runAskCommand(cwd, {
         ...(base === undefined ? {} : { base }),
         force: options.flags.has("--force")
       });
     }
-    case "status":
-      parseOptions(rest, new Set(), new Set());
+    case "status": {
+      const options = parseCommandOptions(rest, new Set(), new Set());
+      const early = helpOrVersionExit(options.flags);
+      if (early !== undefined) {
+        return early;
+      }
       return runStatusCommand(cwd);
+    }
     case "pr": {
-      const options = parseOptions(
+      const options = parseCommandOptions(
         rest,
         new Set(["--base", "--title"]),
         new Set()
       );
+      const early = helpOrVersionExit(options.flags);
+      if (early !== undefined) {
+        return early;
+      }
       const base = options.values.get("--base");
       const title = options.values.get("--title");
       return runPrCommand(cwd, {
@@ -133,11 +199,15 @@ export async function runCli(
       });
     }
     case "clean": {
-      const options = parseOptions(
+      const options = parseCommandOptions(
         rest,
         new Set(),
         new Set(["--all", "--force"])
       );
+      const early = helpOrVersionExit(options.flags);
+      if (early !== undefined) {
+        return early;
+      }
       return runCleanCommand(cwd, {
         all: options.flags.has("--all"),
         force: options.flags.has("--force")
@@ -145,6 +215,10 @@ export async function runCli(
     }
     case "hook": {
       const [hookName, remote] = rest;
+      if (hookName !== undefined && HELP_OPTIONS.includes(hookName)) {
+        console.log(HELP);
+        return EXIT_CODE.success;
+      }
       if (hookName !== "pre-push") {
         throw new Error("対応していないhookです。");
       }
