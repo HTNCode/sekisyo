@@ -8,6 +8,13 @@ import { SEKISYO_VERSION } from "../../src/version.ts";
 
 const temporaryDirectories: string[] = [];
 
+/** 実リポジトリを触らせないための、Git管理下でない一時ディレクトリ */
+async function createScratchDirectory(): Promise<string> {
+  const cwd = await mkdtemp(join(tmpdir(), "sekisyo-cli-scratch-"));
+  temporaryDirectories.push(cwd);
+  return cwd;
+}
+
 async function createEmptyGitConfig(): Promise<{
   readonly configPath: string;
   readonly cwd: string;
@@ -85,10 +92,11 @@ describe("Sekisyo CLI Git passthrough", () => {
 
 describe("Sekisyo CLI のヘルプと版表示", () => {
   test("コマンドなし・help・--help・-h はヘルプを表示して0で終了する", async () => {
+    const cwd = await createScratchDirectory();
     const log = captureLog();
     try {
       for (const args of [[], ["help"], ["--help"], ["-h"]]) {
-        expect(await runCli(args, process.cwd())).toBe(0);
+        expect(await runCli(args, cwd)).toBe(0);
       }
     } finally {
       log.restore();
@@ -99,14 +107,13 @@ describe("Sekisyo CLI のヘルプと版表示", () => {
   });
 
   test("サブコマンドの後ろの --help / -h でもヘルプを表示して0で終了する", async () => {
+    const cwd = await createScratchDirectory();
     const log = captureLog();
     try {
-      expect(await runCli(["status", "--help"], process.cwd())).toBe(0);
-      expect(await runCli(["status", "-h"], process.cwd())).toBe(0);
-      expect(await runCli(["clean", "--all", "--help"], process.cwd())).toBe(0);
-      expect(
-        await runCli(["pr", "--base", "main", "--help"], process.cwd())
-      ).toBe(0);
+      expect(await runCli(["status", "--help"], cwd)).toBe(0);
+      expect(await runCli(["status", "-h"], cwd)).toBe(0);
+      expect(await runCli(["clean", "--all", "--help"], cwd)).toBe(0);
+      expect(await runCli(["pr", "--base", "main", "--help"], cwd)).toBe(0);
     } finally {
       log.restore();
     }
@@ -115,11 +122,12 @@ describe("Sekisyo CLI のヘルプと版表示", () => {
   });
 
   test("サブコマンドの後ろの --version / -v でも版を表示して0で終了する", async () => {
+    const cwd = await createScratchDirectory();
     const log = captureLog();
     try {
-      expect(await runCli(["--version"], process.cwd())).toBe(0);
-      expect(await runCli(["ask", "--version"], process.cwd())).toBe(0);
-      expect(await runCli(["status", "-v"], process.cwd())).toBe(0);
+      expect(await runCli(["--version"], cwd)).toBe(0);
+      expect(await runCli(["ask", "--version"], cwd)).toBe(0);
+      expect(await runCli(["status", "-v"], cwd)).toBe(0);
     } finally {
       log.restore();
     }
@@ -128,10 +136,11 @@ describe("Sekisyo CLI のヘルプと版表示", () => {
   });
 
   test("git passthroughの引数は横取りしない", async () => {
+    const cwd = await createScratchDirectory();
     const log = captureLog();
     try {
       // 本物のgitが応答するため、sekisyo自身の版は console.log へ出ない
-      expect(await runCli(["git", "--version"], process.cwd())).toBe(0);
+      expect(await runCli(["git", "--version"], cwd)).toBe(0);
     } finally {
       log.restore();
     }
@@ -142,26 +151,44 @@ describe("Sekisyo CLI のヘルプと版表示", () => {
 
 describe("Sekisyo CLI のオプション検査", () => {
   test("不明なオプションはヘルプへ誘導して失敗する", async () => {
-    await expect(runCli(["status", "--bogus"], process.cwd())).rejects.toThrow(
-      "不明なオプションです: --bogus `sekisyo --help` で使い方を確認できます。"
+    const cwd = await createScratchDirectory();
+
+    await expect(runCli(["status", "--bogus"], cwd)).rejects.toThrow(
+      "不明なオプションです: --bogus。`sekisyo --help` で使い方を確認できます。"
     );
   });
 
   test("値を取るオプションの値欠落はヘルプへ誘導して失敗する", async () => {
-    await expect(runCli(["ask", "--base"], process.cwd())).rejects.toThrow(
+    const cwd = await createScratchDirectory();
+
+    await expect(runCli(["ask", "--base"], cwd)).rejects.toThrow(
       "--base には値が必要です。`sekisyo --help` で使い方を確認できます。"
     );
   });
 
-  test("値の位置に現れた --help はヘルプではなく値欠落として扱う", async () => {
-    await expect(
-      runCli(["pr", "--title", "--help"], process.cwd())
-    ).rejects.toThrow("--title には値が必要です。");
+  /**
+   * 短縮形まで弾かないと、オプション解析を素通りして本物の gh / git を呼ぶ
+   * `pr` まで到達する。値欠落として弾まることを位置ごとに固定する。
+   */
+  test("値の位置に現れた既知オプションは値ではなく値欠落として扱う", async () => {
+    const cwd = await createScratchDirectory();
+
+    for (const args of [
+      ["pr", "--title", "--help"],
+      ["pr", "--title", "-h"],
+      ["pr", "--title", "-v"],
+      ["pr", "--base", "--title"],
+      ["ask", "--base", "--force"]
+    ]) {
+      await expect(runCli(args, cwd)).rejects.toThrow("には値が必要です。");
+    }
   });
 
   test("--show-alias と --no-alias の同時指定は失敗する", async () => {
+    const cwd = await createScratchDirectory();
+
     await expect(
-      runCli(["init", "--show-alias", "--no-alias"], process.cwd())
+      runCli(["init", "--show-alias", "--no-alias"], cwd)
     ).rejects.toThrow("--show-alias と --no-alias は同時に指定できません。");
   });
 });

@@ -32,7 +32,10 @@ export const EXIT_CODE = {
   cancelled: 2,
   /** 実行環境に起因する中断（対話端末がない、入力がEOFに達した） */
   environment: 3,
-  /** 設定・方針に起因する中断（除外パスが差分に含まれるなど） */
+  /**
+   * 設定・方針により差分を読まずに中断した。現在到達するのは privacy.exclude に
+   * 一致するパスが差分に含まれる場合だけで、設定ファイル自体の不正は failure。
+   */
   configuration: 4
 } as const;
 

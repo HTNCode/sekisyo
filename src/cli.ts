@@ -20,7 +20,8 @@ const HELP = `Sekisyo CLI — AI生成コードを説明責任つきでレビュ
   sekisyo git <git args...>
   sekisyo <unknown git command...>
 
-いずれのサブコマンドでも --help / --version を受け付けます。
+init / ask / status / pr / clean では --help / --version を任意の位置で
+受け付けます。内部用の hook は対象外です。
 
 pre-pushフック内部:
   sekisyo hook pre-push <remote> <url>
@@ -32,7 +33,7 @@ pre-pushフック内部:
   1 未通過、または一般的な失敗
   2 利用者が中断した
   3 実行環境に起因する中断（対話端末がない、入力がEOFに達した）
-  4 設定・方針に起因する中断
+  4 秘密情報として除外されたパスが差分に含まれるため、読まずに中断した
 `;
 
 const HELP_OPTIONS: readonly string[] = ["--help", "-h"];
@@ -63,14 +64,21 @@ function parseOptions(
     }
     if (valueOptions.has(option)) {
       const value = args[index + 1];
-      if (value === undefined || value.startsWith("--")) {
+      // 既知のオプション名（-h / -v のような短縮形も含む）を値として飲み込むと、
+      // 解析を素通りして副作用のあるコマンドが走るため、値欠落として弾く。
+      if (
+        value === undefined ||
+        value.startsWith("--") ||
+        booleanOptions.has(value) ||
+        valueOptions.has(value)
+      ) {
         throw new Error(`${option} には値が必要です。${HELP_HINT}`);
       }
       values.set(option, value);
       index += 1;
       continue;
     }
-    throw new Error(`不明なオプションです: ${option} ${HELP_HINT}`);
+    throw new Error(`不明なオプションです: ${option}。${HELP_HINT}`);
   }
   return { flags, values };
 }

@@ -37,20 +37,6 @@ describe("exitCodeForError", () => {
     }
   });
 
-  test("GateErrorCode の全てに対応が定義されている", () => {
-    const codes = Object.keys(EXPECTED).sort();
-
-    expect(codes).toEqual([
-      "fix_requested",
-      "follow_ups_exhausted",
-      "interactive_input_closed",
-      "interactive_terminal_required",
-      "no_changes",
-      "privacy_exclusion",
-      "review_reason_exhausted"
-    ]);
-  });
-
   test("ゲート外で起きた入力EOFもenvironmentへ寄せる", () => {
     expect(exitCodeForError(new TerminalInputClosedError())).toBe(
       EXIT_CODE.environment

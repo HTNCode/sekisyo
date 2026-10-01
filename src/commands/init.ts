@@ -1,3 +1,4 @@
+import { EXIT_CODE } from "../application/errors.ts";
 import { findRepositoryRoot } from "../adapters/git/gitRepository.ts";
 import { createConsoleTerminal } from "../adapters/terminal/consoleTerminal.ts";
 import {
@@ -102,5 +103,5 @@ export async function runInitCommand(
     await terminal?.close();
   }
   console.log("初期化しました。次に `sekisyo ask` を実行できます。");
-  return 0;
+  return EXIT_CODE.success;
 }

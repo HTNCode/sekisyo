@@ -135,15 +135,19 @@ describe("runInitCommand", () => {
 
   test("--no-aliasでも2回目の初期化は既存設定を保ったまま成功する", async () => {
     const repo = await createRepository();
+    const configPath = join(repo, ".sekisyo.yml");
 
     await expect(
       runInitCommand(repo, { noAlias: true }, runtimeFor(undefined))
     ).resolves.toBe(0);
+    // テンプレートそのままでは上書きされても気づけないため目印を足す
+    const edited = `${SEKISYO_CONFIG_TEMPLATE}\n# 人が足した行\n`;
+    await Bun.write(configPath, edited);
+
     await expect(
       runInitCommand(repo, { noAlias: true }, runtimeFor(undefined))
     ).resolves.toBe(0);
-    expect(await Bun.file(join(repo, ".sekisyo.yml")).text()).toBe(
-      SEKISYO_CONFIG_TEMPLATE
-    );
+
+    expect(await Bun.file(configPath).text()).toBe(edited);
   });
 });

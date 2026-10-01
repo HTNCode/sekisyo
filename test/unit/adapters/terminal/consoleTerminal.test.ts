@@ -185,6 +185,19 @@ describe("ConsoleTerminal の色判定", () => {
     expect(notTty.colorTarget.isTTY).toBeUndefined();
   });
 
+  test("fdでTTYでないと判定したらストリームのisTTYより優先する", () => {
+    const sink = collector();
+    const stream = Object.assign(sink.stream, { isTTY: true });
+    const openedPipe = new ConsoleTerminal(
+      Readable.from([]),
+      stream,
+      false,
+      false
+    );
+
+    expect(openedPipe.colorTarget.isTTY).toBeFalse();
+  });
+
   test("自前で開いた端末はfdから判定した結果を優先する", () => {
     const sink = collector();
     const openedTty = new ConsoleTerminal(

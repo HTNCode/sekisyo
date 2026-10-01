@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   heading,
   muted,
@@ -8,6 +8,12 @@ import {
 } from "../../../src/ui/format.ts";
 
 const ORIGINAL_NO_COLOR = process.env.NO_COLOR;
+
+// 開発環境に NO_COLOR が export されていても結果が変わらないよう、
+// 色が付くことを期待するテストの前に必ず消す。見るテストだけが自分で設定する。
+beforeEach(() => {
+  delete process.env.NO_COLOR;
+});
 
 afterEach(() => {
   if (ORIGINAL_NO_COLOR === undefined) {
