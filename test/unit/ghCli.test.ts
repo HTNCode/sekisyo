@@ -8,7 +8,8 @@ import type {
 const SUCCESS: CommandResult = {
   exitCode: 0,
   stdout: "",
-  stderr: ""
+  stderr: "",
+  timedOut: false
 };
 
 describe("GhCliPrPublisher", () => {
@@ -97,5 +98,19 @@ describe("GhCliPrPublisher", () => {
       "--body-file=-"
     ]);
     expect(calls[1]?.stdin).toBe("updated");
+  });
+
+  test("gh のタイムアウトは exit code ではなくタイムアウトとして報告される", async () => {
+    const execute: CommandExecutor = async (command) => {
+      if (command[0] === "git") {
+        return { ...SUCCESS, stdout: "feature\n" };
+      }
+      return { ...SUCCESS, exitCode: 1, timedOut: true };
+    };
+    const publisher = new GhCliPrPublisher("C:\\repo", execute);
+
+    await expect(publisher.findCurrent("ignored")).rejects.toThrow(
+      "gh timed out after 60000ms."
+    );
   });
 });

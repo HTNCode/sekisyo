@@ -7,6 +7,7 @@ import type {
 } from "../../ports/pr-publisher.ts";
 import {
   CommandError,
+  describeCommandFailure,
   runCommand,
   type CommandExecutor,
   type CommandResult
@@ -63,7 +64,7 @@ async function runGh(
   });
   if (result.exitCode !== 0) {
     throw new CommandError(
-      `gh exited with code ${result.exitCode}.`,
+      describeCommandFailure(command, result, COMMAND_TIMEOUT_MS),
       command,
       result
     );
@@ -177,7 +178,11 @@ export class GhCliPrPublisher implements PrPublisher {
     );
     if (result.exitCode !== 0) {
       throw new CommandError(
-        `gh exited with code ${result.exitCode}.`,
+        describeCommandFailure(
+          ["gh", "pr", "list"],
+          result,
+          COMMAND_TIMEOUT_MS
+        ),
         ["gh", "pr", "list"],
         result
       );

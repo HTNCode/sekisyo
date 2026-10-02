@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import {
+  chmod,
   mkdir,
   lstat,
   readdir,
   readFile,
   rename,
+  stat,
   unlink,
   writeFile
 } from "node:fs/promises";
@@ -16,6 +18,8 @@ import {
 import type { SessionStore } from "../../ports/session-store.ts";
 
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
+const SECURE_DIRECTORY_MODE = 0o700;
+const PERMISSION_MODE_MASK = 0o777;
 
 function isMissingFileError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
@@ -31,6 +35,14 @@ async function assertNotSymbolicLink(path: string): Promise<void> {
     if (!isMissingFileError(error)) {
       throw error;
     }
+  }
+}
+
+// mkdir の mode は新規作成時にしか効かないため、既存ディレクトリのモードを明示的に締め直す。
+async function enforceSecureDirectoryMode(path: string): Promise<void> {
+  const stats = await stat(path);
+  if ((stats.mode & PERMISSION_MODE_MASK) !== SECURE_DIRECTORY_MODE) {
+    await chmod(path, SECURE_DIRECTORY_MODE);
   }
 }
 
@@ -107,6 +119,7 @@ export class AtomicJsonSessionStore implements SessionStore {
       mode: 0o700
     });
     await assertNotSymbolicLink(this.stateDirectory);
+    await enforceSecureDirectoryMode(this.stateDirectory);
     await assertNotSymbolicLink(destination);
 
     try {

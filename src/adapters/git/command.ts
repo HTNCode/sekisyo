@@ -2,6 +2,7 @@ export interface CommandResult {
   readonly exitCode: number;
   readonly stderr: string;
   readonly stdout: string;
+  readonly timedOut: boolean;
 }
 
 export interface CommandOptions {
@@ -37,13 +38,36 @@ export class CommandOutputLimitError extends Error {
   }
 }
 
+// sekisyo が自前で保持するOpenAI認証情報。git も gh も必要としないため子プロセスへ渡さない。
+// gh は GH_TOKEN / GITHUB_TOKEN / keyring 系、git は GIT_* / SSH_AUTH_SOCK などを必要とするため、
+// allowlistではなくdenylistで絞る。
+const ENVIRONMENT_DENYLIST = new Set([
+  "OPENAI_API_KEY",
+  "OPENAI_ORGANIZATION",
+  "OPENAI_ORG_ID",
+  "OPENAI_PROJECT_ID"
+]);
+
+export function describeCommandFailure(
+  command: readonly string[],
+  result: CommandResult,
+  timeoutMs?: number
+): string {
+  if (result.timedOut) {
+    return timeoutMs === undefined
+      ? `${command[0]} timed out.`
+      : `${command[0]} timed out after ${timeoutMs}ms.`;
+  }
+  return `${command[0]} exited with code ${result.exitCode}.`;
+}
+
 function sanitizedEnvironment(
   overrides: Readonly<Record<string, string | undefined>> = {}
 ): Record<string, string> {
   const environment: Record<string, string> = {};
 
   for (const [name, value] of Object.entries(process.env)) {
-    if (value !== undefined) {
+    if (value !== undefined && !ENVIRONMENT_DENYLIST.has(name.toUpperCase())) {
       environment[name] = value;
     }
   }
@@ -76,8 +100,15 @@ export async function runCommand(
   });
 
   let timeout: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
   if (options.timeoutMs !== undefined) {
-    timeout = setTimeout(() => processHandle.kill(), options.timeoutMs);
+    timeout = setTimeout(() => {
+      if (processHandle.exitCode !== null) {
+        return;
+      }
+      timedOut = true;
+      processHandle.kill();
+    }, options.timeoutMs);
   }
 
   try {
@@ -90,7 +121,8 @@ export async function runCommand(
     return {
       exitCode,
       stderr,
-      stdout
+      stdout,
+      timedOut
     };
   } finally {
     if (timeout !== undefined) {
@@ -106,7 +138,7 @@ export async function runCheckedCommand(
   const result = await runCommand(command, options);
   if (result.exitCode !== 0) {
     throw new CommandError(
-      `${command[0]} exited with code ${result.exitCode}.`,
+      describeCommandFailure(command, result, options.timeoutMs),
       command,
       result
     );
@@ -138,10 +170,17 @@ export async function runCheckedCommandWithStdoutLimit(
   const chunks: Uint8Array[] = [];
   let byteLength = 0;
   let exceeded = false;
+  let timedOut = false;
   const timeout =
     options.timeoutMs === undefined
       ? undefined
-      : setTimeout(() => processHandle.kill(), options.timeoutMs);
+      : setTimeout(() => {
+          if (processHandle.exitCode !== null) {
+            return;
+          }
+          timedOut = true;
+          processHandle.kill();
+        }, options.timeoutMs);
 
   try {
     while (true) {
@@ -175,10 +214,10 @@ export async function runCheckedCommandWithStdoutLimit(
   }
 
   const stdout = new TextDecoder().decode(Buffer.concat(chunks));
-  const result = { exitCode, stderr, stdout };
+  const result = { exitCode, stderr, stdout, timedOut };
   if (exitCode !== 0) {
     throw new CommandError(
-      `${command[0]} exited with code ${exitCode}.`,
+      describeCommandFailure(command, result, options.timeoutMs),
       command,
       result
     );
