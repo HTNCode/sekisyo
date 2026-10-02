@@ -6,7 +6,6 @@ import {
   readdir,
   readFile,
   rename,
-  stat,
   unlink,
   writeFile
 } from "node:fs/promises";
@@ -39,8 +38,13 @@ async function assertNotSymbolicLink(path: string): Promise<void> {
 }
 
 // mkdir の mode は新規作成時にしか効かないため、既存ディレクトリのモードを明示的に締め直す。
+// このファイルの他の検査と同じく lstat を使い、シンボリックリンク先のモードを見ない。
+// POSIX のみ有効で、Windows の chmod は読み取り専用属性しか変えられない。
 async function enforceSecureDirectoryMode(path: string): Promise<void> {
-  const stats = await stat(path);
+  const stats = await lstat(path);
+  if (!stats.isDirectory()) {
+    throw new Error(`Session state path must be a directory: ${path}`);
+  }
   if ((stats.mode & PERMISSION_MODE_MASK) !== SECURE_DIRECTORY_MODE) {
     await chmod(path, SECURE_DIRECTORY_MODE);
   }

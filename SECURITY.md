@@ -27,6 +27,17 @@ read. Codex receives an isolated snapshot with Git metadata, symlinks,
 agent-control files, and excluded paths removed. Raw API keys and raw diffs must
 never be stored in local pass records or PR bodies.
 
+Child `git` and `gh` processes do not receive OpenAI environment variables
+(`OPENAI_API_KEY`, `OPENAI_BASE_URL`, and the organization and project
+variables). This is a minimal denylist, not a full sanitizer: other secrets in
+the invoking shell, such as cloud or registry tokens, are still inherited, and
+the `sekisyo git` passthrough intentionally hands the environment to Git
+unchanged.
+
+The local record directory is kept at mode `0o700`, and an existing directory
+with a different mode is tightened on each save. This relies on POSIX
+permissions and has no effect on Windows.
+
 PR write-back rejects recognizable credentials and neutralizes raw HTML and
 GitHub mentions, but this is a defense-in-depth heuristic rather than a complete
 secret scanner. In particular, the generic `name = value` check only treats a

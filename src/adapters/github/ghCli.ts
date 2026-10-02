@@ -62,7 +62,7 @@ async function runGh(
     ...(stdin === undefined ? {} : { stdin }),
     timeoutMs: COMMAND_TIMEOUT_MS
   });
-  if (result.exitCode !== 0) {
+  if (result.timedOut || result.exitCode !== 0) {
     throw new CommandError(
       describeCommandFailure(command, result, COMMAND_TIMEOUT_MS),
       command,
@@ -76,10 +76,19 @@ async function currentBranch(
   repoRoot: string,
   execute: CommandExecutor = runCommand
 ): Promise<string | undefined> {
-  const result = await execute(
-    ["git", "symbolic-ref", "--quiet", "--short", "HEAD"],
-    { cwd: repoRoot, timeoutMs: COMMAND_TIMEOUT_MS }
-  );
+  const command = ["git", "symbolic-ref", "--quiet", "--short", "HEAD"];
+  const result = await execute(command, {
+    cwd: repoRoot,
+    timeoutMs: COMMAND_TIMEOUT_MS
+  });
+  if (result.timedOut) {
+    // タイムアウトを undefined に落とすと呼び出し側が「既存PRなし」と解釈してしまう。
+    throw new CommandError(
+      describeCommandFailure(command, result, COMMAND_TIMEOUT_MS),
+      command,
+      result
+    );
+  }
   if (result.exitCode !== 0) {
     return undefined;
   }
@@ -164,26 +173,24 @@ export class GhCliPrPublisher implements PrPublisher {
     if (branch === undefined) {
       return undefined;
     }
-    const result = await this.#execute(
-      [
-        "gh",
-        "pr",
-        "list",
-        `--head=${branch}`,
-        "--state=open",
-        "--limit=1",
-        "--json=number,url,state,body,headRefOid,headRefName,baseRefOid,baseRefName"
-      ],
-      { cwd: this.#repoRoot, timeoutMs: COMMAND_TIMEOUT_MS }
-    );
-    if (result.exitCode !== 0) {
+    const command = [
+      "gh",
+      "pr",
+      "list",
+      `--head=${branch}`,
+      "--state=open",
+      "--limit=1",
+      "--json=number,url,state,body,headRefOid,headRefName,baseRefOid,baseRefName"
+    ];
+    const result = await this.#execute(command, {
+      cwd: this.#repoRoot,
+      timeoutMs: COMMAND_TIMEOUT_MS
+    });
+    if (result.timedOut || result.exitCode !== 0) {
+      const label = ["gh", "pr", "list"];
       throw new CommandError(
-        describeCommandFailure(
-          ["gh", "pr", "list"],
-          result,
-          COMMAND_TIMEOUT_MS
-        ),
-        ["gh", "pr", "list"],
+        describeCommandFailure(label, result, COMMAND_TIMEOUT_MS),
+        label,
         result
       );
     }

@@ -8,9 +8,12 @@ import type {
 } from "../../ports/git-repository.ts";
 import type { PrPublisher } from "../../ports/pr-publisher.ts";
 import {
+  CommandError,
+  describeCommandFailure,
   runCheckedCommand,
   runCommand,
-  runInheritedCommand
+  runInheritedCommand,
+  type CommandResult
 } from "./command.ts";
 import {
   isObjectId,
@@ -56,6 +59,20 @@ function assertPrivatePath(path: string): void {
   }
 }
 
+// タイムアウトを「参照が存在しない」「remoteが取れない」といった別の原因へ化けさせない。
+function assertNotTimedOut(
+  command: readonly string[],
+  result: CommandResult
+): void {
+  if (result.timedOut) {
+    throw new CommandError(
+      describeCommandFailure(command, result, COMMAND_TIMEOUT_MS),
+      command,
+      result
+    );
+  }
+}
+
 function assertRepositoryRoot(path: string): string {
   const repoRoot = path.trim();
   if (
@@ -79,14 +96,7 @@ export class GitCliRepository implements GitRepository {
     this.#prPublisher = options.prPublisher;
   }
 
-  async #git(
-    cwd: string,
-    args: readonly string[]
-  ): Promise<{
-    readonly exitCode: number;
-    readonly stderr: string;
-    readonly stdout: string;
-  }> {
+  async #git(cwd: string, args: readonly string[]): Promise<CommandResult> {
     return runCommand(["git", ...args], {
       cwd,
       timeoutMs: COMMAND_TIMEOUT_MS
@@ -98,11 +108,9 @@ export class GitCliRepository implements GitRepository {
     reference: string
   ): Promise<string | undefined> {
     const safeReference = assertReference(reference, "Commit reference");
-    const result = await this.#git(repoRoot, [
-      "rev-parse",
-      "--verify",
-      `${safeReference}^{commit}`
-    ]);
+    const args = ["rev-parse", "--verify", `${safeReference}^{commit}`];
+    const result = await this.#git(repoRoot, args);
+    assertNotTimedOut(["git", ...args], result);
     if (result.exitCode !== 0) {
       return undefined;
     }
@@ -125,11 +133,9 @@ export class GitCliRepository implements GitRepository {
   }
 
   async #currentRef(repoRoot: string): Promise<string> {
-    const result = await this.#git(repoRoot, [
-      "symbolic-ref",
-      "--quiet",
-      "HEAD"
-    ]);
+    const args = ["symbolic-ref", "--quiet", "HEAD"];
+    const result = await this.#git(repoRoot, args);
+    assertNotTimedOut(["git", ...args], result);
     const reference = result.stdout.trim();
     if (result.exitCode !== 0 || reference.length === 0) {
       throw new Error(
@@ -148,6 +154,7 @@ export class GitCliRepository implements GitRepository {
     }
 
     const result = await this.#git(repoRoot, ["remote"]);
+    assertNotTimedOut(["git", "remote"], result);
     if (result.exitCode !== 0) {
       throw new Error("Unable to list Git remotes.");
     }

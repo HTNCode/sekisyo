@@ -113,4 +113,29 @@ describe("GhCliPrPublisher", () => {
       "gh timed out after 60000ms."
     );
   });
+
+  test("git symbolic-ref のタイムアウトは「ブランチなし」に化けない", async () => {
+    const execute: CommandExecutor = async (command) => {
+      if (command[0] === "git") {
+        return { ...SUCCESS, exitCode: 1, timedOut: true };
+      }
+      throw new Error("gh must not run when the branch is unknown.");
+    };
+    const publisher = new GhCliPrPublisher("C:\\repo", execute);
+
+    await expect(publisher.findCurrent("ignored")).rejects.toThrow(
+      "git timed out after 60000ms."
+    );
+  });
+
+  test("runGh 経路のタイムアウトもタイムアウトとして報告される", async () => {
+    const execute: CommandExecutor = async () => {
+      return { ...SUCCESS, exitCode: 0, timedOut: true };
+    };
+    const publisher = new GhCliPrPublisher("C:\\repo", execute);
+
+    await expect(publisher.updateBody(12, "updated")).rejects.toThrow(
+      "gh timed out after 60000ms."
+    );
+  });
 });
