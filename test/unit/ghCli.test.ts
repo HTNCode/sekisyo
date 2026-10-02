@@ -100,19 +100,25 @@ describe("GhCliPrPublisher", () => {
     expect(calls[1]?.stdin).toBe("updated");
   });
 
-  test("gh のタイムアウトは exit code ではなくタイムアウトとして報告される", async () => {
-    const execute: CommandExecutor = async (command) => {
-      if (command[0] === "git") {
-        return { ...SUCCESS, stdout: "feature\n" };
-      }
-      return { ...SUCCESS, exitCode: 1, timedOut: true };
-    };
-    const publisher = new GhCliPrPublisher("C:\\repo", execute);
+  test.each([
+    ["exit code 0 で終了しても", 0],
+    ["exit code 非ゼロでも", 1]
+  ])(
+    "gh のタイムアウトは %s タイムアウトとして報告される",
+    async (_label, exitCode) => {
+      const execute: CommandExecutor = async (command) => {
+        if (command[0] === "git") {
+          return { ...SUCCESS, stdout: "feature\n" };
+        }
+        return { ...SUCCESS, exitCode, timedOut: true };
+      };
+      const publisher = new GhCliPrPublisher("C:\\repo", execute);
 
-    await expect(publisher.findCurrent("ignored")).rejects.toThrow(
-      "gh timed out after 60000ms."
-    );
-  });
+      await expect(publisher.findCurrent("ignored")).rejects.toThrow(
+        "gh timed out after 60000ms."
+      );
+    }
+  );
 
   test("git symbolic-ref のタイムアウトは「ブランチなし」に化けない", async () => {
     const execute: CommandExecutor = async (command) => {

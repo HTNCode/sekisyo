@@ -30,9 +30,9 @@ never be stored in local pass records or PR bodies.
 Child `git` and `gh` processes do not receive OpenAI environment variables
 (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, and the organization and project
 variables). This is a minimal denylist, not a full sanitizer: other secrets in
-the invoking shell, such as cloud or registry tokens, are still inherited, and
-the `sekisyo git` passthrough intentionally hands the environment to Git
-unchanged.
+the invoking shell, such as cloud or registry tokens, are still inherited. The
+`sekisyo git` passthrough also still hands the environment to Git unchanged;
+tightening it is tracked separately.
 
 The local record directory is kept at mode `0o700`, and an existing directory
 with a different mode is tightened on each save. This relies on POSIX

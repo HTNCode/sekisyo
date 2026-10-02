@@ -6,6 +6,7 @@ import type {
   PullRequest
 } from "../../ports/pr-publisher.ts";
 import {
+  assertNotTimedOut,
   CommandError,
   describeCommandFailure,
   runCommand,
@@ -81,14 +82,8 @@ async function currentBranch(
     cwd: repoRoot,
     timeoutMs: COMMAND_TIMEOUT_MS
   });
-  if (result.timedOut) {
-    // タイムアウトを undefined に落とすと呼び出し側が「既存PRなし」と解釈してしまう。
-    throw new CommandError(
-      describeCommandFailure(command, result, COMMAND_TIMEOUT_MS),
-      command,
-      result
-    );
-  }
+  // タイムアウトを undefined に落とすと呼び出し側が「既存PRなし」と解釈してしまう。
+  assertNotTimedOut(command, result, COMMAND_TIMEOUT_MS);
   if (result.exitCode !== 0) {
     return undefined;
   }

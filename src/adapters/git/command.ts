@@ -65,6 +65,21 @@ export function describeCommandFailure(
   return `${command[0]} exited with code ${result.exitCode}.`;
 }
 
+// タイムアウトを「参照が存在しない」「ブランチが取れない」といった別の原因へ化けさせない。
+export function assertNotTimedOut(
+  command: readonly string[],
+  result: CommandResult,
+  timeoutMs?: number
+): void {
+  if (result.timedOut) {
+    throw new CommandError(
+      describeCommandFailure(command, result, timeoutMs),
+      command,
+      result
+    );
+  }
+}
+
 function isDenied(name: string): boolean {
   return OPENAI_ENVIRONMENT_DENYLIST.has(name.toUpperCase());
 }

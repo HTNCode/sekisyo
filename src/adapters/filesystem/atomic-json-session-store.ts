@@ -42,6 +42,8 @@ async function assertNotSymbolicLink(path: string): Promise<void> {
 // POSIX のみ有効で、Windows の chmod は読み取り専用属性しか変えられない。
 async function enforceSecureDirectoryMode(path: string): Promise<void> {
   const stats = await lstat(path);
+  // save からは mkdir と assertNotSymbolicLink が先に弾くため到達しない。
+  // save 以外から呼ばれたときの多層防御として残す。
   if (!stats.isDirectory()) {
     throw new Error(`Session state path must be a directory: ${path}`);
   }

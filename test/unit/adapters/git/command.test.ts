@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
+  assertNotTimedOut,
   CommandError,
   describeCommandFailure,
   runCheckedCommand,
@@ -185,6 +186,35 @@ describe("タイムアウト検出", () => {
         64_000
       )
     ).rejects.toThrow(`${process.execPath} timed out after 300ms.`);
+  });
+
+  test("assertNotTimedOutはtimedOutのときだけCommandErrorを投げる", () => {
+    const command = ["git", "rev-parse", "--verify", "HEAD^{commit}"];
+
+    expect(() =>
+      assertNotTimedOut(
+        command,
+        { exitCode: 1, stderr: "", stdout: "", timedOut: false },
+        60_000
+      )
+    ).not.toThrow();
+
+    let thrown: unknown;
+    try {
+      assertNotTimedOut(
+        command,
+        { exitCode: 0, stderr: "", stdout: "", timedOut: true },
+        60_000
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(CommandError);
+    expect((thrown as CommandError).message).toBe(
+      "git timed out after 60000ms."
+    );
+    expect((thrown as CommandError).command).toEqual(command);
   });
 
   test("timeoutMs不明のときは所要時間なしのタイムアウト文言になる", () => {

@@ -8,8 +8,7 @@ import type {
 } from "../../ports/git-repository.ts";
 import type { PrPublisher } from "../../ports/pr-publisher.ts";
 import {
-  CommandError,
-  describeCommandFailure,
+  assertNotTimedOut as assertCommandNotTimedOut,
   runCheckedCommand,
   runCommand,
   runInheritedCommand,
@@ -59,18 +58,11 @@ function assertPrivatePath(path: string): void {
   }
 }
 
-// タイムアウトを「参照が存在しない」「remoteが取れない」といった別の原因へ化けさせない。
 function assertNotTimedOut(
   command: readonly string[],
   result: CommandResult
 ): void {
-  if (result.timedOut) {
-    throw new CommandError(
-      describeCommandFailure(command, result, COMMAND_TIMEOUT_MS),
-      command,
-      result
-    );
-  }
+  assertCommandNotTimedOut(command, result, COMMAND_TIMEOUT_MS);
 }
 
 function assertRepositoryRoot(path: string): string {
@@ -217,6 +209,7 @@ export class GitCliRepository implements GitRepository {
       "--quiet",
       `refs/remotes/${remote}/HEAD`
     ]);
+    assertNotTimedOut(["git", "symbolic-ref"], remoteHead);
     if (remoteHead.exitCode === 0 && remoteHead.stdout.trim().length > 0) {
       const oid = await this.#resolveCommit(repoRoot, remoteHead.stdout.trim());
       if (oid !== undefined) {
@@ -319,6 +312,7 @@ export class GitCliRepository implements GitRepository {
       this.#git(safeRepoRoot, ["check-ref-format", ref]),
       this.#resolveBase(safeRepoRoot, head, remote, options)
     ]);
+    assertNotTimedOut(["git", "check-ref-format"], refCheck);
     if (refCheck.exitCode !== 0) {
       throw new Error(`Invalid remote destination ref: ${ref}`);
     }
