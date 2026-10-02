@@ -1,3 +1,4 @@
+import { EXIT_CODE } from "../application/errors.ts";
 import { findRepositoryRoot } from "../adapters/git/gitRepository.ts";
 import { createConsoleTerminal } from "../adapters/terminal/consoleTerminal.ts";
 import {
@@ -35,6 +36,8 @@ function aliasInstructions(): string {
 
 export interface InitOptions {
   readonly showAlias?: boolean;
+  /** 案内を表示するか尋ねずに省略する。非対話での冪等な初期化に使う。 */
+  readonly noAlias?: boolean;
 }
 
 interface InitTerminal {
@@ -84,9 +87,10 @@ export async function runInitCommand(
   console.log(`pre-pushフック: ${hookPath}`);
 
   let showAlias = options.showAlias === true;
-  const terminal = runtime.createTerminal();
+  const asksShowAlias = !showAlias && options.noAlias !== true;
+  const terminal = asksShowAlias ? runtime.createTerminal() : undefined;
   try {
-    if (!showAlias && terminal !== undefined) {
+    if (asksShowAlias && terminal !== undefined) {
       terminal.write(
         "Git本来のコマンドを保ったまま `git ask` / `git pr` を追加できます。"
       );
@@ -99,5 +103,5 @@ export async function runInitCommand(
     await terminal?.close();
   }
   console.log("初期化しました。次に `sekisyo ask` を実行できます。");
-  return 0;
+  return EXIT_CODE.success;
 }

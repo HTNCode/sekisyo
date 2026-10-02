@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInitCommand, type InitRuntime } from "../../src/commands/init.ts";
+import { SEKISYO_CONFIG_TEMPLATE } from "../../src/config/parse.ts";
 import { TerminalInputClosedError } from "../../src/ports/terminal.ts";
 
 const temporaryDirectories: string[] = [];
@@ -108,5 +109,45 @@ describe("runInitCommand", () => {
       runInitCommand(repo, { showAlias: true }, runtimeFor(terminal))
     ).resolves.toBe(0);
     expect(terminal.confirmCalls).toBe(0);
+  });
+
+  test("--no-aliasなら対話環境でも確認せず端末も開かない", async () => {
+    const repo = await createRepository();
+    const terminal = new RecordingTerminal(true);
+    let createCalls = 0;
+
+    await expect(
+      runInitCommand(
+        repo,
+        { noAlias: true },
+        {
+          createTerminal: () => {
+            createCalls += 1;
+            return terminal;
+          }
+        }
+      )
+    ).resolves.toBe(0);
+    expect(createCalls).toBe(0);
+    expect(terminal.confirmCalls).toBe(0);
+    expect(await Bun.file(join(repo, ".sekisyo.yml")).exists()).toBeTrue();
+  });
+
+  test("--no-aliasでも2回目の初期化は既存設定を保ったまま成功する", async () => {
+    const repo = await createRepository();
+    const configPath = join(repo, ".sekisyo.yml");
+
+    await expect(
+      runInitCommand(repo, { noAlias: true }, runtimeFor(undefined))
+    ).resolves.toBe(0);
+    // テンプレートそのままでは上書きされても気づけないため目印を足す
+    const edited = `${SEKISYO_CONFIG_TEMPLATE}\n# 人が足した行\n`;
+    await Bun.write(configPath, edited);
+
+    await expect(
+      runInitCommand(repo, { noAlias: true }, runtimeFor(undefined))
+    ).resolves.toBe(0);
+
+    expect(await Bun.file(configPath).text()).toBe(edited);
   });
 });

@@ -1,23 +1,30 @@
 import { createReadStream, createWriteStream, openSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
-import { TerminalInputClosedError } from "../../ports/terminal.ts";
-
-export interface SelectOption<T extends string> {
-  readonly label: string;
-  readonly value: T;
-}
+import { isatty } from "node:tty";
+import {
+  TerminalInputClosedError,
+  type ColorTarget,
+  type SelectOption,
+  type Terminal
+} from "../../ports/terminal.ts";
 
 type TerminalReadable = Readable & { readonly isTTY?: boolean };
+type TerminalWritable = Writable & { readonly isTTY?: boolean };
 
-export class ConsoleTerminal {
+export class ConsoleTerminal implements Terminal {
   private readonly reader;
   private inputClosed = false;
 
   public constructor(
     private readonly input: TerminalReadable,
-    private readonly output: Writable,
-    private readonly ownsStreams = false
+    private readonly output: TerminalWritable,
+    private readonly ownsStreams = false,
+    /**
+     * 自前で開いた制御端末は fs ストリームになり isTTY を持たないため、
+     * 開いた側が fd から判定した結果を渡す。
+     */
+    private readonly outputIsTTY: boolean | undefined = undefined
   ) {
     // CONIN$ や /dev/tty を fs ストリームで開いた場合は raw モードに
     // 切り替えられず、コンソールのネイティブエコーと readline のエコーが
@@ -53,6 +60,11 @@ export class ConsoleTerminal {
     }
   }
 
+  /** 色判定の材料。自前で開いた端末では fd から判定した結果を優先する。 */
+  public get colorTarget(): ColorTarget {
+    return { isTTY: this.outputIsTTY ?? this.output.isTTY };
+  }
+
   public write(message: string): void {
     this.output.write(`${message}\n`);
   }
@@ -79,10 +91,10 @@ export class ConsoleTerminal {
     return answer === "y" || answer === "yes";
   }
 
-  public async select<T extends string>(
+  public async select<Value extends string>(
     message: string,
-    options: readonly SelectOption<T>[]
-  ): Promise<T> {
+    options: readonly SelectOption<Value>[]
+  ): Promise<Value> {
     if (options.length === 0) {
       throw new Error("A selection requires at least one option.");
     }
@@ -90,6 +102,9 @@ export class ConsoleTerminal {
     this.write(message);
     for (const [index, option] of options.entries()) {
       this.write(`  ${index + 1}. ${option.label}`);
+      if (option.description !== undefined) {
+        this.write(`     ${option.description}`);
+      }
     }
 
     while (true) {
@@ -139,7 +154,7 @@ function openControllingTerminal(): ConsoleTerminal | undefined {
       autoClose: true,
       fd: outputFd
     });
-    return new ConsoleTerminal(input, output, true);
+    return new ConsoleTerminal(input, output, true, isatty(outputFd));
   } catch {
     return undefined;
   }

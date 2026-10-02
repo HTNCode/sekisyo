@@ -1,12 +1,13 @@
 #!/usr/bin/env bun
 
+import { exitCodeForError } from "../application/errors.ts";
 import { formatCliError, runCli } from "../cli.ts";
 
 try {
   process.exitCode = await runCli(process.argv.slice(2));
 } catch (error) {
   console.error(`sekisyo: ${formatCliError(error)}`);
-  process.exitCode = 1;
+  process.exitCode = exitCodeForError(error);
 }
 
 // CONIN$ / /dev/tty の保留中読み取りはキャンセルできない場合があり、

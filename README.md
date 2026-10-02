@@ -98,6 +98,13 @@ transfers the explanation record to the pull request body.
 | `sekisyo git <args...>` | Always pass arguments through to the real Git       |
 | `sekisyo <git args...>` | Pass unknown commands through to the real Git       |
 
+`init`, `ask`, `status`, `pr`, and `clean` accept `--help` and `--version` in
+any position, so `sekisyo status --help` prints the usage text and exits with 0.
+The internal `hook` subcommand is not covered: it accepts `--help` or `-h` only
+directly after `hook`, so that `sekisyo hook pre-push` can never be turned into
+a successful no-op that skips the gate. Arguments after `sekisyo git` and after
+an unknown Git command are always handed to the real Git untouched.
+
 The hook starts the interactive examination when a terminal is available. A push
 from an IDE or another non-interactive process fails safely and explains how to
 complete `sekisyo ask` first.
@@ -109,6 +116,34 @@ layer: the pre-push hook works without it. The safe wrapper routes only
 `git ask` and `git pr` to Sekisyo, while existing commands such as `git init`,
 `git status`, and `git clean` continue to invoke the real Git. Run
 `sekisyo status`, `sekisyo clean`, and `sekisyo init` explicitly.
+
+`sekisyo init --show-alias` prints the wrapper without asking, and
+`sekisyo init --no-alias` skips the question entirely, which keeps the command
+usable from non-interactive setup scripts.
+
+## Exit codes
+
+Exit codes describe the kind of cause rather than the individual error, so that
+adding an internal error category does not shift the numbers.
+
+| Code | Meaning                                                                      |
+| ---- | ---------------------------------------------------------------------------- |
+| 0    | Success                                                                      |
+| 1    | The gate did not pass, or a general failure                                  |
+| 2    | The user stopped the run (declined a confirmation, chose to fix the code)    |
+| 3    | The environment stopped the run (no interactive terminal, input reached EOF) |
+| 4    | A `privacy.exclude` pattern matched a changed path, so the diff was unread   |
+
+`sekisyo git <args...>` and unknown Git commands return the exit code of the
+real Git process unchanged.
+
+Code 4 is currently reached only by the privacy exclusion above. A malformed
+`.sekisyo.yml` and a diff over `analysis.maxChangedFiles` both exit with 1, so
+do not branch on 4 to detect configuration mistakes.
+
+These numbers replace the earlier behavior of returning 1 for every failure. A
+script that tests `$? -eq 1` to detect any failure needs to test `$? -ne 0`
+instead.
 
 ## Installation
 

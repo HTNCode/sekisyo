@@ -1,4 +1,6 @@
 import {
+  EXIT_CODE,
+  GateError,
   PROMPT_VERSION,
   runGate,
   type GateDependencies,
@@ -63,7 +65,7 @@ export async function runPrePushHook(
 ): Promise<number> {
   const updates = parsePrePushInput(input.stdin).filter(shouldAssessUpdate);
   if (updates.length === 0) {
-    return 0;
+    return EXIT_CODE.success;
   }
 
   let terminal: HookTerminal | undefined;
@@ -106,7 +108,8 @@ export async function runPrePushHook(
       }
       terminal ??= runtime.createTerminal();
       if (terminal === undefined) {
-        throw new Error(
+        throw new GateError(
+          "interactive_terminal_required",
           "対話可能な端末がありません。先に端末で `sekisyo ask` を実行してからpushしてください。"
         );
       }
@@ -115,7 +118,7 @@ export async function runPrePushHook(
         allowReuse: false
       });
     }
-    return 0;
+    return EXIT_CODE.success;
   } finally {
     await terminal?.close();
   }

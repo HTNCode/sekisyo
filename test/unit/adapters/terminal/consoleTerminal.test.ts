@@ -142,6 +142,26 @@ describe("ConsoleTerminal のEOF処理", () => {
     await expect(choice).resolves.toBe("intentional");
   });
 
+  test("selectは説明文がある選択肢の説明も表示する", async () => {
+    const session = interactiveTerminal();
+
+    const choice = session.terminal.select("選んでください", [
+      {
+        label: "修正する",
+        value: "fix",
+        description: "pushせず、コードを直してから再実行します"
+      },
+      { label: "説明する", value: "intentional" }
+    ] as const);
+    await session.answer("1");
+
+    await expect(choice).resolves.toBe("fix");
+    const output = session.output();
+    expect(output).toContain("1. 修正する");
+    expect(output).toContain("pushせず、コードを直してから再実行します");
+    expect(output).toContain("2. 説明する");
+  });
+
   test("有効な番号が来るまでselectは再入力を促す", async () => {
     const session = interactiveTerminal();
 
@@ -154,5 +174,39 @@ describe("ConsoleTerminal のEOF処理", () => {
 
     await expect(choice).resolves.toBe("fix");
     expect(session.output()).toContain("有効な番号を入力してください。");
+  });
+});
+
+describe("ConsoleTerminal の色判定", () => {
+  test("出力ストリームのisTTYをcolorTargetとして公開する", () => {
+    const sink = collector();
+    const notTty = new ConsoleTerminal(Readable.from([]), sink.stream);
+
+    expect(notTty.colorTarget.isTTY).toBeUndefined();
+  });
+
+  test("fdでTTYでないと判定したらストリームのisTTYより優先する", () => {
+    const sink = collector();
+    const stream = Object.assign(sink.stream, { isTTY: true });
+    const openedPipe = new ConsoleTerminal(
+      Readable.from([]),
+      stream,
+      false,
+      false
+    );
+
+    expect(openedPipe.colorTarget.isTTY).toBeFalse();
+  });
+
+  test("自前で開いた端末はfdから判定した結果を優先する", () => {
+    const sink = collector();
+    const openedTty = new ConsoleTerminal(
+      Readable.from([]),
+      sink.stream,
+      false,
+      true
+    );
+
+    expect(openedTty.colorTarget.isTTY).toBeTrue();
   });
 });

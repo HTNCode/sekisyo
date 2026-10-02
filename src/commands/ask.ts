@@ -1,4 +1,4 @@
-import { runGate } from "../application/index.ts";
+import { EXIT_CODE, GateError, runGate } from "../application/index.ts";
 import { createConsoleTerminal } from "../adapters/terminal/consoleTerminal.ts";
 import { prepareGate } from "./runtime.ts";
 
@@ -13,7 +13,10 @@ export async function runAskCommand(
 ): Promise<number> {
   const terminal = createConsoleTerminal();
   if (terminal === undefined) {
-    throw new Error("対話可能な端末で `sekisyo ask` を実行してください。");
+    throw new GateError(
+      "interactive_terminal_required",
+      "対話可能な端末で `sekisyo ask` を実行してください。"
+    );
   }
   try {
     const prepared = await prepareGate(cwd, terminal, {
@@ -27,9 +30,9 @@ export async function runAskCommand(
     );
     if (session.status === "passed" || session.status === "summarized") {
       terminal.write(`通行手形: ${session.fingerprint.slice(0, 12)}`);
-      return 0;
+      return EXIT_CODE.success;
     }
-    return 1;
+    return EXIT_CODE.failure;
   } finally {
     await terminal.close();
   }

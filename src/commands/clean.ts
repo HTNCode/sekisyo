@@ -1,3 +1,4 @@
+import { EXIT_CODE, GateError } from "../application/index.ts";
 import { resolveCommit } from "../adapters/git/gitRepository.ts";
 import { createConsoleTerminal } from "../adapters/terminal/consoleTerminal.ts";
 import { createSessionStore } from "./runtime.ts";
@@ -22,7 +23,7 @@ export async function runCleanCommand(
   }
   if (resolvedTargets.length === 0) {
     console.log("削除対象の一時記録はありません。");
-    return 0;
+    return EXIT_CODE.success;
   }
 
   let confirmed = options.force === true;
@@ -30,7 +31,8 @@ export async function runCleanCommand(
   try {
     if (!confirmed) {
       if (terminal === undefined) {
-        throw new Error(
+        throw new GateError(
+          "interactive_terminal_required",
           "非対話環境では `sekisyo clean --force` を指定してください。"
         );
       }
@@ -43,12 +45,12 @@ export async function runCleanCommand(
   }
   if (!confirmed) {
     console.log("削除を取り消しました。");
-    return 1;
+    return EXIT_CODE.cancelled;
   }
 
   for (const session of resolvedTargets) {
     await store.remove(session.fingerprint);
   }
   console.log(`${resolvedTargets.length}件の一時記録を削除しました。`);
-  return 0;
+  return EXIT_CODE.success;
 }
