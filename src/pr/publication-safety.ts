@@ -7,6 +7,19 @@ const CREDENTIAL_URL_PATTERN = /\bhttps?:\/\/[^\s/:@]+:([^\s/@]+)@[^\s]+/giu;
 const ENVIRONMENT_REFERENCE_PATTERN =
   /^(?:\$\{[a-z_][a-z0-9_]*\}|\$[a-z_][a-z0-9_]*|%[a-z_][a-z0-9_]*%|(?:process\.)?env\.[a-z_][a-z0-9_]*)$/iu;
 const MASKED_VALUE_PATTERN = /^[*x]{3,}$/iu;
+// 不可視文字は値を分断して検知を回避できるため、判定前に取り除く。
+// 個別列挙では異体字セレクタなどを取りこぼすため Unicode の property で指定する。
+const IGNORABLE_CHARACTER_PATTERN = /\p{Default_Ignorable_Code_Point}/gu;
+// 資格情報として扱う代入値の条件。日本語などの散文をまるごと値として拾う誤検知を
+// 防ぐため、値全体が ASCII 印字可能文字であるか、資格情報らしい長さの ASCII 連続を
+// 含むものに限る。実在の値の直後に日本語が続いて1つのキャプチャに融合した場合も
+// 後者で検知する。
+const ASCII_PRINTABLE_VALUE_PATTERN = /^[\u0020-\u007e]+$/u;
+const CREDENTIAL_RUN_MINIMUM_LENGTH = 8;
+const CREDENTIAL_RUN_PATTERN = new RegExp(
+  `[\\u0021-\\u007e]{${CREDENTIAL_RUN_MINIMUM_LENGTH},}`,
+  "u"
+);
 const SAFE_SECRET_PLACEHOLDERS: ReadonlySet<string> = new Set([
   "absent",
   "api key",
@@ -146,6 +159,14 @@ function assignedSecretValue(match: RegExpMatchArray): string {
   return match.slice(1).find((value) => value !== undefined) ?? "";
 }
 
+function looksLikeCredentialValue(value: string): boolean {
+  const stripped = value.replace(IGNORABLE_CHARACTER_PATTERN, "");
+  return (
+    ASCII_PRINTABLE_VALUE_PATTERN.test(stripped) ||
+    CREDENTIAL_RUN_PATTERN.test(stripped)
+  );
+}
+
 function isSafePlaceholder(value: string): boolean {
   const normalized = value
     .trim()
@@ -180,7 +201,11 @@ function secretKind(value: string): string | undefined {
 
   for (const match of normalized.matchAll(SECRET_ASSIGNMENT_PATTERN)) {
     const assignedValue = assignedSecretValue(match);
-    if (assignedValue.length > 0 && !isSafePlaceholder(assignedValue)) {
+    if (
+      assignedValue.length > 0 &&
+      looksLikeCredentialValue(assignedValue) &&
+      !isSafePlaceholder(assignedValue)
+    ) {
       return "credential assignment";
     }
   }
