@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  chmod,
   mkdir,
   lstat,
   readdir,
@@ -16,6 +17,8 @@ import {
 import type { SessionStore } from "../../ports/session-store.ts";
 
 const FINGERPRINT_PATTERN = /^[0-9a-f]{64}$/;
+const SECURE_DIRECTORY_MODE = 0o700;
+const PERMISSION_MODE_MASK = 0o777;
 
 function isMissingFileError(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
@@ -31,6 +34,21 @@ async function assertNotSymbolicLink(path: string): Promise<void> {
     if (!isMissingFileError(error)) {
       throw error;
     }
+  }
+}
+
+// mkdir の mode は新規作成時にしか効かないため、既存ディレクトリのモードを明示的に締め直す。
+// このファイルの他の検査と同じく lstat を使い、シンボリックリンク先のモードを見ない。
+// POSIX のみ有効で、Windows の chmod は読み取り専用属性しか変えられない。
+async function enforceSecureDirectoryMode(path: string): Promise<void> {
+  const stats = await lstat(path);
+  // save からは mkdir と assertNotSymbolicLink が先に弾くため到達しない。
+  // save 以外から呼ばれたときの多層防御として残す。
+  if (!stats.isDirectory()) {
+    throw new Error(`Session state path must be a directory: ${path}`);
+  }
+  if ((stats.mode & PERMISSION_MODE_MASK) !== SECURE_DIRECTORY_MODE) {
+    await chmod(path, SECURE_DIRECTORY_MODE);
   }
 }
 
@@ -107,6 +125,7 @@ export class AtomicJsonSessionStore implements SessionStore {
       mode: 0o700
     });
     await assertNotSymbolicLink(this.stateDirectory);
+    await enforceSecureDirectoryMode(this.stateDirectory);
     await assertNotSymbolicLink(destination);
 
     try {
