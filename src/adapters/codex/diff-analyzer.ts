@@ -1,7 +1,6 @@
 import { z } from "zod";
 import { mkdir, readdir, rm, rmdir, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 
 import type {
   DiffAnalysisInput,
@@ -13,6 +12,7 @@ import {
 } from "../../domain/strictness.ts";
 import type { ProcessRunner } from "../../ports/process-runner.ts";
 import { createPrivacyPathMatcher } from "../../application/policy.ts";
+import { noopPhaseTimer, type PhaseTimer } from "../../observability/timing.ts";
 import {
   diffAnalysisWireSchema,
   toDiffAnalysis
@@ -29,6 +29,14 @@ import {
   type CodexTemporaryWorkspaceFactory,
   NodeCodexTemporaryWorkspaceFactory
 } from "./temporary-workspace.ts";
+
+export const SNAPSHOT_PHASE = "snapshot";
+export const SNAPSHOT_INIT_PHASE = "snapshot:init";
+export const SNAPSHOT_OBJECTS_PHASE = "snapshot:objects";
+export const SNAPSHOT_PROBE_PHASE = "snapshot:probe";
+export const SNAPSHOT_EXTRACT_PHASE = "snapshot:extract";
+export const SNAPSHOT_SANITIZE_PHASE = "snapshot:sanitize";
+export const CODEX_ANALYSIS_PHASE = "codex-analysis";
 
 const DEFAULT_CODEX_TIMEOUT_MS = 180_000;
 const CODEX_EXECUTABLE = "codex";
@@ -144,6 +152,7 @@ export interface CodexDiffAnalyzerOptions {
   readonly model?: string;
   readonly strictness?: ReviewStrictness;
   readonly timeoutMs?: number;
+  readonly timer?: PhaseTimer;
 }
 
 interface ResolvedCodexDiffAnalyzerOptions {
@@ -151,6 +160,7 @@ interface ResolvedCodexDiffAnalyzerOptions {
   readonly model: string | undefined;
   readonly strictness: ReviewStrictness;
   readonly timeoutMs: number;
+  readonly timer: PhaseTimer;
 }
 
 function resolveOptions(
@@ -171,7 +181,8 @@ function resolveOptions(
     executable,
     model,
     strictness: options.strictness ?? DEFAULT_REVIEW_STRICTNESS,
-    timeoutMs
+    timeoutMs,
+    timer: options.timer ?? noopPhaseTimer()
   };
 }
 
@@ -440,11 +451,68 @@ function hasCaseInsensitiveTreeCollision(manifest: string): boolean {
   return false;
 }
 
+/**
+ * 元リポジトリの共有オブジェクトディレクトリを解決する。linked worktree や
+ * `.git` ファイル形式のリポジトリでも実体のある objects/ を指すよう、
+ * --git-common-dir を使う。探索は GIT_CEILING_DIRECTORIES で入力pathの直上で
+ * 止める。入力がリポジトリでないとき、上位ディレクトリの別リポジトリの
+ * オブジェクトストアが黙って採用されるのを防ぐため。
+ *
+ * GIT_CEILING_DIRECTORIES は区切り文字つきのリストなので、pathに区切り文字
+ * （POSIXなら`:`、Windowsなら`;`）が含まれると分割されて無視される。あくまで
+ * 多層防御の一枚で、唯一の防壁ではない。呼び出し元が渡すrepositoryPathは
+ * `rev-parse --show-toplevel` 由来のリポジトリルートで、上位探索自体が起きない。
+ */
+async function resolveSourceObjectDirectory(
+  runPreparationProcess: (
+    argv: readonly string[],
+    cwd: string,
+    env: Readonly<Record<string, string>>
+  ) => Promise<string>,
+  repositoryPath: string
+): Promise<string> {
+  const sourcePath = resolve(repositoryPath);
+  const output = await runPreparationProcess(
+    [
+      "git",
+      "-c",
+      "core.hooksPath=",
+      "rev-parse",
+      "--path-format=absolute",
+      "--git-common-dir"
+    ],
+    sourcePath,
+    {
+      ...gitPreparationEnvironment(),
+      GIT_CEILING_DIRECTORIES: dirname(sourcePath)
+    }
+  );
+  // gitはpathを引用せずそのまま出力するので、改行を含むpathは行数のずれになる。
+  // alternatesファイルは1行1pathで、改行を含むpathは別pathとして解釈される。
+  const lines = output
+    .split("\n")
+    .map((line) => line.replace(/\r$/u, ""))
+    .filter((line, index, all) => index < all.length - 1 || line.length > 0);
+  const [commonDirectory] = lines;
+  if (
+    lines.length !== 1 ||
+    commonDirectory === undefined ||
+    commonDirectory.length === 0 ||
+    // gitがC引用符で囲んだpathを返した場合も、絶対pathではなくなるのでここで落ちる。
+    !isAbsolute(commonDirectory) ||
+    /[\r\0]/u.test(commonDirectory)
+  ) {
+    throw new CodexAdapterError("repository_preparation");
+  }
+  return resolve(commonDirectory, "objects");
+}
+
 async function runRepositoryPreparation(
   runner: ProcessRunner,
   input: DiffAnalysisInput,
   workspace: CodexTemporaryWorkspace,
   deadlineMs: number,
+  timer: PhaseTimer,
   signal?: AbortSignal
 ): Promise<void> {
   const runPreparationProcess = async (
@@ -481,70 +549,85 @@ async function runRepositoryPreparation(
     return result.stdout;
   };
 
-  try {
-    await mkdir(workspace.stagingRepositoryPath, { mode: 0o700 });
-    await runPreparationProcess(
-      [
-        "git",
-        "-c",
-        "init.templateDir=",
-        "init",
-        "--quiet",
-        ...(input.head.length === 64 ? ["--object-format=sha256"] : [])
-      ],
-      workspace.stagingRepositoryPath,
-      gitPreparationEnvironment()
-    );
-    await mkdir(resolve(workspace.stagingRepositoryPath, ".git", "info"), {
-      mode: 0o700,
-      recursive: true
-    });
-    await writeFile(
-      resolve(workspace.stagingRepositoryPath, ".git", "info", "attributes"),
-      EXACT_ARCHIVE_ATTRIBUTES,
-      {
-        encoding: "utf8",
-        flag: "wx",
-        mode: 0o600
+  await timer.measure(SNAPSHOT_INIT_PHASE, async () => {
+    try {
+      await mkdir(workspace.stagingRepositoryPath, { mode: 0o700 });
+      await runPreparationProcess(
+        [
+          "git",
+          "-c",
+          "init.templateDir=",
+          "init",
+          "--quiet",
+          ...(input.head.length === 64 ? ["--object-format=sha256"] : [])
+        ],
+        workspace.stagingRepositoryPath,
+        gitPreparationEnvironment()
+      );
+      await mkdir(resolve(workspace.stagingRepositoryPath, ".git", "info"), {
+        mode: 0o700,
+        recursive: true
+      });
+      await writeFile(
+        resolve(workspace.stagingRepositoryPath, ".git", "info", "attributes"),
+        EXACT_ARCHIVE_ATTRIBUTES,
+        {
+          encoding: "utf8",
+          flag: "wx",
+          mode: 0o600
+        }
+      );
+    } catch (error) {
+      if (error instanceof CodexAdapterError) {
+        throw error;
       }
-    );
-  } catch (error) {
-    if (error instanceof CodexAdapterError) {
-      throw error;
+      throw new CodexAdapterError("repository_preparation");
     }
-    throw new CodexAdapterError("repository_preparation");
-  }
+  });
 
-  await runPreparationProcess(
-    [
-      "git",
-      "-c",
-      "core.hooksPath=",
-      "-c",
-      "protocol.file.allow=always",
-      "fetch",
-      "--quiet",
-      "--depth=1",
-      "--no-tags",
-      "--no-recurse-submodules",
-      "--no-write-fetch-head",
-      "--",
-      pathToFileURL(resolve(input.repositoryPath)).href,
-      input.head
-    ],
-    workspace.stagingRepositoryPath,
-    gitPreparationEnvironment()
-  );
-
-  let caseInsensitivePaths: boolean;
-  try {
-    caseInsensitivePaths = await usesCaseInsensitivePaths(
-      resolve(workspace.stagingRepositoryPath, "..")
+  await timer.measure(SNAPSHOT_OBJECTS_PHASE, async () => {
+    // depth-1 fetch でオブジェクトを複製する代わりに、作業用リポジトリから
+    // 元リポジトリのオブジェクトストアを読み取り専用で参照する。生成される
+    // アーカイブはfetchの場合とバイト単位で同一で、info/attributes による
+    // export-ignore 無効化もこちらのGIT_DIRで効き続ける。
+    const objectDirectory = await resolveSourceObjectDirectory(
+      runPreparationProcess,
+      input.repositoryPath
     );
-  } catch {
-    throw new CodexAdapterError("repository_preparation");
-  }
-  if (caseInsensitivePaths) {
+    try {
+      const alternatesDirectory = resolve(
+        workspace.stagingRepositoryPath,
+        ".git",
+        "objects",
+        "info"
+      );
+      await mkdir(alternatesDirectory, { mode: 0o700, recursive: true });
+      await writeFile(
+        resolve(alternatesDirectory, "alternates"),
+        `${objectDirectory}\n`,
+        {
+          encoding: "utf8",
+          flag: "wx",
+          mode: 0o600
+        }
+      );
+    } catch {
+      throw new CodexAdapterError("repository_preparation");
+    }
+  });
+
+  await timer.measure(SNAPSHOT_PROBE_PHASE, async () => {
+    let caseInsensitivePaths: boolean;
+    try {
+      caseInsensitivePaths = await usesCaseInsensitivePaths(
+        resolve(workspace.stagingRepositoryPath, "..")
+      );
+    } catch {
+      throw new CodexAdapterError("repository_preparation");
+    }
+    if (!caseInsensitivePaths) {
+      return;
+    }
     const manifest = await runPreparationProcess(
       [
         "git",
@@ -562,60 +645,64 @@ async function runRepositoryPreparation(
     if (hasCaseInsensitiveTreeCollision(manifest)) {
       throw new CodexAdapterError("repository_preparation");
     }
-  }
+  });
 
-  await runPreparationProcess(
-    [
-      "git",
-      "-c",
-      "core.hooksPath=",
-      "archive",
-      "--format=tar",
-      `--output=${workspace.archivePath}`,
-      input.head
-    ],
-    workspace.stagingRepositoryPath,
-    gitPreparationEnvironment()
-  );
+  await timer.measure(SNAPSHOT_EXTRACT_PHASE, async () => {
+    try {
+      await mkdir(workspace.repositoryPath, { mode: 0o700 });
+    } catch {
+      throw new CodexAdapterError("repository_preparation");
+    }
 
-  try {
-    await rm(workspace.stagingRepositoryPath, {
-      force: true,
-      recursive: true
-    });
-  } catch {
-    throw new CodexAdapterError("repository_preparation");
-  }
-
-  try {
-    await mkdir(workspace.repositoryPath, { mode: 0o700 });
-  } catch {
-    throw new CodexAdapterError("repository_preparation");
-  }
-
-  await runPreparationProcess(
-    [
-      "tar",
-      "-k",
-      "-xf",
-      basename(workspace.archivePath),
-      "-C",
-      basename(workspace.repositoryPath)
-    ],
-    dirname(workspace.archivePath),
-    createCodexEnvironment()
-  );
-
-  try {
-    await unlink(workspace.archivePath);
-    await prepareSanitizedSnapshot(
-      workspace.repositoryPath,
-      input.diff,
-      input.excludedPaths ?? []
+    await runPreparationProcess(
+      [
+        "git",
+        "-c",
+        "core.hooksPath=",
+        "archive",
+        "--format=tar",
+        `--output=${workspace.archivePath}`,
+        input.head
+      ],
+      workspace.stagingRepositoryPath,
+      gitPreparationEnvironment()
     );
-  } catch {
-    throw new CodexAdapterError("repository_preparation");
-  }
+
+    try {
+      await rm(workspace.stagingRepositoryPath, {
+        force: true,
+        recursive: true
+      });
+    } catch {
+      throw new CodexAdapterError("repository_preparation");
+    }
+
+    await runPreparationProcess(
+      [
+        "tar",
+        "-k",
+        "-xf",
+        basename(workspace.archivePath),
+        "-C",
+        basename(workspace.repositoryPath)
+      ],
+      dirname(workspace.archivePath),
+      createCodexEnvironment()
+    );
+  });
+
+  await timer.measure(SNAPSHOT_SANITIZE_PHASE, async () => {
+    try {
+      await unlink(workspace.archivePath);
+      await prepareSanitizedSnapshot(
+        workspace.repositoryPath,
+        input.diff,
+        input.excludedPaths ?? []
+      );
+    } catch {
+      throw new CodexAdapterError("repository_preparation");
+    }
+  });
 }
 
 function validateEventStream(stdout: string): void {
@@ -705,24 +792,29 @@ export class CodexDiffAnalyzer implements DiffAnalyzer {
     let analysis: DiffAnalysis | undefined;
     let operationError: unknown;
     try {
-      await runRepositoryPreparation(
-        this.#processRunner,
-        input,
-        workspace,
-        deadlineMs,
-        signal
+      await this.#options.timer.measure(SNAPSHOT_PHASE, () =>
+        runRepositoryPreparation(
+          this.#processRunner,
+          input,
+          workspace,
+          deadlineMs,
+          this.#options.timer,
+          signal
+        )
       );
       const timeoutMs = remainingTimeoutMs(deadlineMs);
       let result;
       try {
-        result = await this.#processRunner.run(
-          {
-            argv: buildArguments(input, workspace, this.#options),
-            cwd: workspace.repositoryPath,
-            env: createCodexEnvironment(),
-            timeoutMs
-          },
-          signal
+        result = await this.#options.timer.measure(CODEX_ANALYSIS_PHASE, () =>
+          this.#processRunner.run(
+            {
+              argv: buildArguments(input, workspace, this.#options),
+              cwd: workspace.repositoryPath,
+              env: createCodexEnvironment(),
+              timeoutMs
+            },
+            signal
+          )
         );
       } catch (error) {
         if (error instanceof ProcessRunnerError) {
