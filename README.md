@@ -145,6 +145,30 @@ These numbers replace the earlier behavior of returning 1 for every failure. A
 script that tests `$? -eq 1` to detect any failure needs to test `$? -ne 0`
 instead.
 
+## Measuring where the wait goes
+
+Set `SEKISYO_DEBUG_TIMING=1` to print the duration of each phase to stderr:
+
+```console
+$ SEKISYO_DEBUG_TIMING=1 sekisyo ask
+sekisyo[timing] git-state 38.2ms
+sekisyo[timing] snapshot:init 3.1ms
+sekisyo[timing] snapshot:objects 2.7ms
+sekisyo[timing] snapshot:probe 0.5ms
+sekisyo[timing] snapshot:extract 6.3ms
+sekisyo[timing] snapshot:sanitize 1.4ms
+sekisyo[timing] snapshot 14.2ms
+sekisyo[timing] codex-analysis 21430.7ms
+sekisyo[timing] question-generation 4820.1ms
+sekisyo[timing] answer-judgment 3110.4ms
+```
+
+`snapshot:*` lines break the snapshot phase down, and the bare `snapshot` line
+is their total. `answer-judgment` is printed once per answer. Any value other
+than empty, `0`, `false`, `no`, or `off` enables the output, ignoring case and
+surrounding whitespace; unset leaves it off, and nothing is written to stdout
+either way.
+
 ## Installation
 
 ### Requirements
@@ -291,9 +315,12 @@ pass records like any other policy change.
   read. Codex receives only the exact HEAD tree—without repository history—in an
   isolated snapshot with Git metadata, symlinks, agent-control files, and
   excluded paths removed; the exact bounded diff is supplied separately as data.
-  Snapshot preparation fetches only the requested commit at depth 1 and
-  neutralizes `export-ignore` and `export-subst`, so tracked files are neither
-  omitted nor rewritten by archive policy.
+  Snapshot preparation archives only the requested commit—reading the source
+  object store read-only through a throwaway staging repository rather than
+  copying objects—and neutralizes `export-ignore` and `export-subst`, so tracked
+  files are neither omitted nor rewritten by archive policy. The staging
+  repository is deleted before the snapshot is extracted, so Codex never sees
+  it.
 - Child processes are launched with argument arrays, never a shell string.
 - Codex runs read-only and ephemerally.
 - The OpenAI key is not forwarded to the Codex child process.

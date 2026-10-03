@@ -19,6 +19,12 @@ import type {
   Terminal
 } from "../ports/index.ts";
 import { TerminalInputClosedError } from "../ports/index.ts";
+import {
+  ANSWER_JUDGMENT_PHASE,
+  noopPhaseTimer,
+  QUESTION_GENERATION_PHASE,
+  type PhaseTimer
+} from "../observability/timing.ts";
 import { heading, muted, success, warning } from "../ui/format.ts";
 import { GateError } from "./errors.ts";
 import { excludedDiffPaths, resolveQuestionCategories } from "./policy.ts";
@@ -50,6 +56,20 @@ export interface GateDependencies {
   readonly model: QaModel;
   readonly store: SessionStore;
   readonly terminal?: Terminal;
+  readonly timer?: PhaseTimer;
+}
+
+function phaseTimer(dependencies: Pick<GateDependencies, "timer">): PhaseTimer {
+  return dependencies.timer ?? noopPhaseTimer();
+}
+
+function judgeAnswer(
+  dependencies: Pick<GateDependencies, "model" | "timer">,
+  input: Parameters<QaModel["judgeAnswer"]>[0]
+): Promise<AnswerJudgment> {
+  return phaseTimer(dependencies).measure(ANSWER_JUDGMENT_PHASE, () =>
+    dependencies.model.judgeAnswer(input)
+  );
 }
 
 export interface RunGateOptions {
@@ -286,7 +306,7 @@ async function resolveFindings(
       judgmentAttempt += 1
     ) {
       const candidate = await collectReviewReason(terminal, findingPath);
-      const judgment = await dependencies.model.judgeAnswer({
+      const judgment = await judgeAnswer(dependencies, {
         answer: candidate,
         question
       });
@@ -422,7 +442,7 @@ async function askOneQuestion(
         );
       }
     }
-    const judgment = await dependencies.model.judgeAnswer({
+    const judgment = await judgeAnswer(dependencies, {
       answer,
       question
     });
@@ -609,13 +629,15 @@ async function runGateSession(
   }
   const questionGenerationController = new AbortController();
   const questionGeneration = settle(
-    dependencies.model.generateQuestions(
-      {
-        analysis,
-        categories,
-        questionCount: config.questions.count
-      },
-      questionGenerationController.signal
+    phaseTimer(dependencies).measure(QUESTION_GENERATION_PHASE, () =>
+      dependencies.model.generateQuestions(
+        {
+          analysis,
+          categories,
+          questionCount: config.questions.count
+        },
+        questionGenerationController.signal
+      )
     )
   );
   try {

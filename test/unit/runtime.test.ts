@@ -6,6 +6,7 @@ import {
   type PrepareGateContextDependencies
 } from "../../src/commands/runtime.ts";
 import { DEFAULT_CONFIG } from "../../src/config/index.ts";
+import { createPhaseTimer } from "../../src/observability/timing.ts";
 import { fingerprint } from "../../src/domain/fingerprint.ts";
 import type { SessionRecord } from "../../src/domain/session.ts";
 import type {
@@ -36,6 +37,42 @@ class EmptySessionStore implements SessionStore {
 }
 
 describe("prepareGateContext", () => {
+  test("timerを渡すとgit状態解決をフェーズとして計測する", async () => {
+    const repoRoot = process.cwd();
+    const lines: string[] = [];
+    const repository: GitRepository = {
+      changedFiles: async () => ["file.ts"],
+      gitPath: async () => join(repoRoot, ".git", "sekisyo"),
+      inspect: async () => ({
+        base: BASE_OID,
+        diffBase: DIFF_BASE_OID,
+        head: HEAD_OID,
+        ref: "refs/heads/feature",
+        remote: "origin",
+        repoRoot,
+        rootCommit: false
+      }),
+      passthrough: async () => 0,
+      readDiff: async () => DIFF
+    };
+
+    await prepareGateContext(
+      repoRoot,
+      { remoteOid: ZERO_OID },
+      {
+        createRepository: () => repository,
+        createStore: () => new EmptySessionStore(),
+        loadConfig: async () => DEFAULT_CONFIG,
+        timer: createPhaseTimer({
+          now: () => 0,
+          write: (line) => lines.push(line)
+        })
+      }
+    );
+
+    expect(lines).toEqual(["sekisyo[timing] git-state 0.0ms"]);
+  });
+
   test("repository APIを各1回だけ呼び、既知rootとdiff-baseを再利用する", async () => {
     const repoRoot = process.cwd();
     const stateDirectory = join(repoRoot, ".git", "sekisyo");
