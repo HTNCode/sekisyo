@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { AtomicJsonSessionStore } from "../../../../src/adapters/filesystem/atomic-json-session-store.ts";
@@ -11,10 +11,14 @@ import {
 
 const temporaryDirectories: string[] = [];
 
-async function createStore(): Promise<AtomicJsonSessionStore> {
+async function createStateDirectoryPath(): Promise<string> {
   const directory = await mkdtemp(join(tmpdir(), "sekisyo-test-"));
   temporaryDirectories.push(directory);
-  return new AtomicJsonSessionStore(join(directory, "state"));
+  return join(directory, "state");
+}
+
+async function createStore(): Promise<AtomicJsonSessionStore> {
+  return new AtomicJsonSessionStore(await createStateDirectoryPath());
 }
 
 function createRecord() {
@@ -42,6 +46,49 @@ afterEach(async () => {
 });
 
 describe("AtomicJsonSessionStore", () => {
+  test.skipIf(process.platform === "win32")(
+    "新規作成した記録ディレクトリは0o700になる",
+    async () => {
+      const stateDirectory = await createStateDirectoryPath();
+      const store = new AtomicJsonSessionStore(stateDirectory);
+
+      await store.save(createRecord());
+
+      const stats = await stat(stateDirectory);
+      expect(stats.mode & 0o777).toBe(0o700);
+    }
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "既存の記録ディレクトリが緩いモードなら0o700へ締め直す",
+    async () => {
+      const stateDirectory = await createStateDirectoryPath();
+      await mkdir(stateDirectory, { recursive: true });
+      await chmod(stateDirectory, 0o777);
+      const store = new AtomicJsonSessionStore(stateDirectory);
+
+      await store.save(createRecord());
+
+      const stats = await stat(stateDirectory);
+      expect(stats.mode & 0o777).toBe(0o700);
+    }
+  );
+
+  test.skipIf(process.platform === "win32")(
+    "実行ビットが落ちた既存ディレクトリも0o700へ直す",
+    async () => {
+      const stateDirectory = await createStateDirectoryPath();
+      await mkdir(stateDirectory, { recursive: true });
+      await chmod(stateDirectory, 0o600);
+      const store = new AtomicJsonSessionStore(stateDirectory);
+
+      await store.save(createRecord());
+
+      const stats = await stat(stateDirectory);
+      expect(stats.mode & 0o777).toBe(0o700);
+    }
+  );
+
   test("`.git`のない任意ディレクトリへ保存して読み込む", async () => {
     const store = await createStore();
     const session = createRecord();
