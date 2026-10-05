@@ -24,6 +24,11 @@ import {
 } from "../config/index.ts";
 import type { GateDependencies } from "../application/gate.ts";
 import { fingerprint } from "../domain/fingerprint.ts";
+import {
+  GIT_STATE_PHASE,
+  resolvePhaseTimer,
+  type PhaseTimer
+} from "../observability/timing.ts";
 import type { ReviewStrictness } from "../domain/strictness.ts";
 import type {
   DiffAnalyzer,
@@ -57,12 +62,14 @@ export interface PrepareGateContextDependencies {
   readonly createRepository: (cwd: string) => GitRepository;
   readonly createStore: (stateDirectory: string) => SessionStore;
   readonly loadConfig: (repoRoot: string) => Promise<SekisyoConfig>;
+  readonly timer?: PhaseTimer;
 }
 
 export interface GateDependencyFactories {
   readonly createAnalyzer: (options: {
     readonly strictness: ReviewStrictness;
     readonly timeoutMs: number;
+    readonly timer: PhaseTimer;
   }) => DiffAnalyzer;
   readonly createModel: (options: {
     readonly model: string;
@@ -123,10 +130,25 @@ async function expectedRemoteOid(
   return "0".repeat(objectFormat === "sha256" ? 64 : 40);
 }
 
+export function defaultPhaseTimer(): PhaseTimer {
+  return resolvePhaseTimer(process.env);
+}
+
 export async function prepareGateContext(
   cwd: string,
   overrides: TargetOverrides = {},
   dependencies: PrepareGateContextDependencies = DEFAULT_CONTEXT_DEPENDENCIES
+): Promise<PreparedGateContext> {
+  const timer = dependencies.timer ?? defaultPhaseTimer();
+  return timer.measure(GIT_STATE_PHASE, () =>
+    resolveGateContext(cwd, overrides, dependencies)
+  );
+}
+
+async function resolveGateContext(
+  cwd: string,
+  overrides: TargetOverrides,
+  dependencies: PrepareGateContextDependencies
 ): Promise<PreparedGateContext> {
   if (overrides.remoteOid !== undefined && !isObjectId(overrides.remoteOid)) {
     throw new Error("pre-push remote object ID is invalid.");
@@ -202,18 +224,21 @@ export async function prepareGateContext(
 export function createGateDependencies(
   context: PreparedGateContext,
   terminal: Terminal | undefined,
-  factories: GateDependencyFactories = DEFAULT_GATE_FACTORIES
+  factories: GateDependencyFactories = DEFAULT_GATE_FACTORIES,
+  timer: PhaseTimer = defaultPhaseTimer()
 ): GateDependencies {
   return {
     analyzer: factories.createAnalyzer({
       strictness: context.config.strictness,
-      timeoutMs: context.config.analysis.timeoutSeconds * 1_000
+      timeoutMs: context.config.analysis.timeoutSeconds * 1_000,
+      timer
     }),
     model: factories.createModel({
       model: context.config.model,
       strictness: context.config.strictness
     }),
     store: context.store,
+    timer,
     ...(terminal === undefined ? {} : { terminal })
   };
 }
@@ -223,10 +248,19 @@ export async function prepareGate(
   terminal: Terminal | undefined,
   overrides: TargetOverrides = {}
 ): Promise<PreparedGate> {
-  const context = await prepareGateContext(cwd, overrides);
+  const timer = defaultPhaseTimer();
+  const context = await prepareGateContext(cwd, overrides, {
+    ...DEFAULT_CONTEXT_DEPENDENCIES,
+    timer
+  });
   return {
     config: context.config,
-    dependencies: createGateDependencies(context, terminal),
+    dependencies: createGateDependencies(
+      context,
+      terminal,
+      DEFAULT_GATE_FACTORIES,
+      timer
+    ),
     target: context.target
   };
 }

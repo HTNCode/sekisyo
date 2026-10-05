@@ -25,6 +25,7 @@ import type {
   ProcessRunner,
   ProcessSpec
 } from "../../src/ports/process-runner.ts";
+import { createPhaseTimer } from "../../src/observability/timing.ts";
 
 const BASE_OID = "1".repeat(40);
 const HEAD_OID = "2".repeat(40);
@@ -53,6 +54,8 @@ const validOutput = JSON.stringify({
   findings: [],
   risks: ["認証失敗時の回帰"]
 });
+
+const FAKE_SOURCE_GIT_DIRECTORY = join(tmpdir(), "sekisyo-fake-source", ".git");
 
 const temporaryRoots = new Set<string>();
 
@@ -263,7 +266,10 @@ class FakeProcessRunner implements ProcessRunner {
   readonly #codexResult: ProcessResult;
   readonly #repositorySeeder: RepositorySeeder;
   readonly specs: ProcessSpec[] = [];
+  /** `git rev-parse --git-common-dir` の応答を差し替えるための上書き */
+  revParseStdout: string | undefined;
   snapshot: SnapshotInspection | undefined;
+  stagedAlternates: string | undefined;
 
   constructor(
     result: Partial<ProcessResult> = {},
@@ -281,10 +287,21 @@ class FakeProcessRunner implements ProcessRunner {
   async run(spec: ProcessSpec): Promise<ProcessResult> {
     this.specs.push(spec);
     if (spec.argv[0] === "git") {
+      if (spec.argv.includes("--git-common-dir")) {
+        return {
+          exitCode: 0,
+          stderr: "",
+          stdout: this.revParseStdout ?? `${FAKE_SOURCE_GIT_DIRECTORY}\n`,
+          timedOut: false
+        };
+      }
       if (spec.argv.includes("init")) {
         await mkdir(join(spec.cwd, ".git", "info"), { recursive: true });
       }
       if (spec.argv.includes("archive")) {
+        this.stagedAlternates = await readFileIfPresent(
+          join(spec.cwd, ".git", "objects", "info", "alternates")
+        );
         const outputArgument = spec.argv.find((argument) =>
           argument.startsWith("--output=")
         );
@@ -324,28 +341,32 @@ class FakeProcessRunner implements ProcessRunner {
 class RealGitFakeCodexRunner implements ProcessRunner {
   readonly #gitRunner = new BunProcessRunner();
   readonly specs: ProcessSpec[] = [];
-  fetchedCommitCount: number | undefined;
   snapshot: SnapshotInspection | undefined;
+  stagedObjectCount: number | undefined;
   stagingRepositoryExistedWhenExtracting: boolean | undefined;
 
   async run(spec: ProcessSpec, signal?: AbortSignal): Promise<ProcessResult> {
     this.specs.push(spec);
     if (spec.argv[0] === "git" || spec.argv[0] === "tar") {
       if (spec.argv.includes("archive")) {
-        const head = spec.argv.at(-1);
-        if (head === undefined) {
-          throw new Error("Archive HEAD was not provided.");
-        }
         const countResult = await this.#gitRunner.run({
-          argv: ["git", "rev-list", "--count", head],
+          argv: ["git", "count-objects", "-v"],
           cwd: spec.cwd,
           env: spec.env,
           timeoutMs: spec.timeoutMs
         });
         if (countResult.exitCode !== 0 || countResult.timedOut) {
-          throw new Error("Unable to inspect the shallow snapshot history.");
+          throw new Error("Unable to inspect the staging object store.");
         }
-        this.fetchedCommitCount = Number(countResult.stdout.trim());
+        this.stagedObjectCount = ["count", "in-pack"]
+          .map((field) =>
+            Number(
+              new RegExp(`^${field}: (\\d+)$`, "mu").exec(
+                countResult.stdout
+              )?.[1] ?? "0"
+            )
+          )
+          .reduce((total, value) => total + value, 0);
       }
       if (spec.argv[0] === "tar") {
         this.stagingRepositoryExistedWhenExtracting = await pathExists(
@@ -665,23 +686,168 @@ async function isCaseInsensitiveFilesystem(
 }
 
 describe("CodexDiffAnalyzer", () => {
-  test("full cloneせずdepth=1のexact HEAD treeを展開する", async () => {
+  test("objectを複製せずexact HEAD treeだけを展開する", async () => {
     const { analyzer, runner } = createAnalyzer();
 
     await analyzer.analyze(validInput());
 
     const gitSpecs = runner.specs.filter((spec) => spec.argv[0] === "git");
     expect(gitSpecs.find((spec) => spec.argv.includes("init"))).toBeDefined();
-    const fetchSpec = gitSpecs.find((spec) => spec.argv.includes("fetch"));
-    expect(fetchSpec?.argv).toContain("--depth=1");
     expect(
       gitSpecs.find((spec) => spec.argv.includes("archive"))
     ).toBeDefined();
-    expect(gitSpecs.flatMap((spec) => spec.argv)).not.toContain("clone");
-    expect(gitSpecs.flatMap((spec) => spec.argv)).not.toContain("checkout");
+    const argumentValues = gitSpecs.flatMap((spec) => spec.argv);
+    expect(argumentValues).not.toContain("clone");
+    expect(argumentValues).not.toContain("checkout");
+    expect(argumentValues).not.toContain("fetch");
     expect(runner.specs.at(-2)?.argv[0]).toBe("tar");
     expect(runner.specs.at(-1)?.argv[0]).toBe("codex");
     expect(runner.snapshot?.gitDirectoryExists).toBe(false);
+    expect(runner.stagedAlternates).toBe(
+      `${join(FAKE_SOURCE_GIT_DIRECTORY, "objects")}\n`
+    );
+  });
+
+  test("timerを渡したときだけフェーズ別の所要時間を出力する", async () => {
+    const lines: string[] = [];
+    const { analyzer } = createAnalyzer(
+      {},
+      validOutput,
+      seedMinimalRepository,
+      {
+        timer: createPhaseTimer({
+          now: () => 0,
+          write: (line) => lines.push(line)
+        })
+      }
+    );
+
+    await analyzer.analyze(validInput());
+
+    expect(lines.map((line) => line.split(" ")[1])).toEqual([
+      "snapshot:init",
+      "snapshot:objects",
+      "snapshot:probe",
+      "snapshot:extract",
+      "snapshot:sanitize",
+      "snapshot",
+      "codex-analysis"
+    ]);
+  });
+
+  test("timerを渡さなければ計測出力をしない", async () => {
+    const writes: string[] = [];
+    const stderrSpy = spyOn(process.stderr, "write").mockImplementation(
+      (chunk: unknown) => {
+        writes.push(String(chunk));
+        return true;
+      }
+    );
+
+    try {
+      const { analyzer } = createAnalyzer();
+      await analyzer.analyze(validInput());
+    } finally {
+      stderrSpy.mockRestore();
+    }
+
+    expect(writes.join("")).not.toContain("sekisyo[timing]");
+  });
+
+  test.each([
+    ["埋め込み改行を含むpath", "/tmp/we\nird/.git\n"],
+    ["相対path", "relative/.git\n"],
+    ["空の応答", "\n"],
+    ["C引用符で囲まれたpath", '"/tmp/we\\tird/.git"\n'],
+    ["NULを含むpath", "/tmp/weird\u0000/.git\n"]
+  ])(
+    "alternatesに1行で書けないgit共通directory（%s）はsnapshotを作らず中断する",
+    async (_label, revParseStdout) => {
+      const { analyzer, runner, workspaceFactory } = createAnalyzer();
+      runner.revParseStdout = revParseStdout;
+
+      await expect(analyzer.analyze(validInput())).rejects.toMatchObject({
+        code: "repository_preparation"
+      });
+
+      expect(runner.specs.some((spec) => spec.argv.includes("archive"))).toBe(
+        false
+      );
+      expect(runner.specs.some((spec) => spec.argv[0] === "tar")).toBe(false);
+      expect(runner.specs.some((spec) => spec.argv[0] === "codex")).toBe(false);
+      expect(runner.stagedAlternates).toBeUndefined();
+      expect(workspaceFactory.workspace?.cleaned).toBe(true);
+    }
+  );
+
+  test("git共通directoryの探索を元repositoryの直上で止める", async () => {
+    const { analyzer, runner } = createAnalyzer();
+    const input = validInput();
+
+    await analyzer.analyze(input);
+
+    const revParseSpec = runner.specs.find((spec) =>
+      spec.argv.includes("--git-common-dir")
+    );
+    expect(revParseSpec?.env["GIT_CEILING_DIRECTORIES"]).toBe(
+      dirname(resolve(input.repositoryPath))
+    );
+  });
+
+  test("元repositoryがrepositoryでなければsnapshotを作らず中断する", async () => {
+    const source = await mkdtemp(join(tmpdir(), "sekisyo-codex-not-repo-"));
+    temporaryRoots.add(source);
+    const runner = new RealGitFakeCodexRunner();
+    const workspaceFactory = new FakeWorkspaceFactory(validOutput);
+    const analyzer = new CodexDiffAnalyzer(runner, workspaceFactory);
+
+    await expect(
+      analyzer.analyze(validInput({ repositoryPath: source }))
+    ).rejects.toMatchObject({ code: "repository_preparation" });
+
+    expect(runner.specs.some((spec) => spec.argv.includes("archive"))).toBe(
+      false
+    );
+    expect(runner.specs.some((spec) => spec.argv[0] === "codex")).toBe(false);
+    expect(workspaceFactory.workspace?.cleaned).toBe(true);
+  }, 30_000);
+
+  test("alternatesの書き込みに失敗したらsnapshotを作らず中断する", async () => {
+    const { analyzer, runner, workspaceFactory } = createAnalyzer();
+    const writeSpy = spyOn(
+      await import("node:fs/promises"),
+      "writeFile"
+    ).mockImplementation(async (path: Parameters<typeof writeFile>[0]) => {
+      if (String(path).endsWith("alternates")) {
+        throw new Error("disk full");
+      }
+    });
+
+    try {
+      await expect(analyzer.analyze(validInput())).rejects.toMatchObject({
+        code: "repository_preparation"
+      });
+    } finally {
+      writeSpy.mockRestore();
+    }
+
+    expect(runner.specs.some((spec) => spec.argv.includes("archive"))).toBe(
+      false
+    );
+    expect(workspaceFactory.workspace?.cleaned).toBe(true);
+  });
+
+  test("元repositoryのgit共通directoryをalternatesとして解決する", async () => {
+    const { analyzer, runner } = createAnalyzer();
+    const input = validInput();
+
+    await analyzer.analyze(input);
+
+    const revParseSpec = runner.specs.find((spec) =>
+      spec.argv.includes("--git-common-dir")
+    );
+    expect(revParseSpec?.argv).toContain("--path-format=absolute");
+    expect(revParseSpec?.cwd).toBe(resolve(input.repositoryPath));
   });
 
   test("Git BashのGNU tarへWindows drive付き絶対pathを渡さない", async () => {
@@ -746,7 +912,7 @@ describe("CodexDiffAnalyzer", () => {
         target: { kind: "commit", commit: source.head }
       });
 
-      expect(runner.fetchedCommitCount).toBe(1);
+      expect(runner.stagedObjectCount).toBe(0);
       expect(runner.snapshot?.gitDirectoryExists).toBe(false);
       expect(runner.snapshot?.historicalFileExists).toBe(false);
       expect(runner.snapshot?.exportIgnoredFileExists).toBe(true);

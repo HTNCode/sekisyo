@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import {
   ensureSessionSummary,
   PROMPT_VERSION,
@@ -25,6 +25,7 @@ import type {
   Terminal
 } from "../../../src/ports/index.ts";
 import { TerminalInputClosedError } from "../../../src/ports/index.ts";
+import { createPhaseTimer } from "../../../src/observability/timing.ts";
 
 const analysis: DiffAnalysis = {
   attention: [
@@ -376,6 +377,81 @@ describe("runGate", () => {
         message.includes("適用範囲・仕様が具体的ではありません")
       )
     ).toBe(true);
+  });
+
+  test("timerを渡すと質問生成と回答判定をフェーズとして計測する", async () => {
+    const lines: string[] = [];
+    const session = await runGate(
+      {
+        analyzer: new StaticAnalyzer(),
+        clock: () => "2026-07-18T12:00:00.000Z",
+        model: new ScriptedModel(),
+        store: new MemorySessionStore(),
+        terminal: new ScriptedTerminal(
+          [
+            ...VALID_REVIEW_PARTS,
+            "空でも大丈夫です",
+            "src/cache.ts:12のempty分岐で何も書き戻しません"
+          ],
+          ["intentional"]
+        ),
+        timer: createPhaseTimer({
+          now: () => 0,
+          write: (line) => lines.push(line)
+        })
+      },
+      {
+        ...DEFAULT_CONFIG,
+        questions: { ...DEFAULT_CONFIG.questions, count: 1 }
+      },
+      target()
+    );
+
+    expect(session.status).toBe("passed");
+    const phases = lines.map((line) => line.split(" ")[1]);
+    expect(phases).toContain("question-generation");
+    // 自己レビュー理由1件と、口頭試問の初回・追撃で合計3回判定している。
+    expect(phases.filter((phase) => phase === "answer-judgment")).toHaveLength(
+      3
+    );
+  });
+
+  test("timerを渡さなければ計測出力をしない", async () => {
+    const writes: string[] = [];
+    const stderrSpy = spyOn(process.stderr, "write").mockImplementation(
+      (chunk: unknown) => {
+        writes.push(String(chunk));
+        return true;
+      }
+    );
+
+    try {
+      await runGate(
+        {
+          analyzer: new StaticAnalyzer(),
+          clock: () => "2026-07-18T12:00:00.000Z",
+          model: new ScriptedModel(),
+          store: new MemorySessionStore(),
+          terminal: new ScriptedTerminal(
+            [
+              ...VALID_REVIEW_PARTS,
+              "空でも大丈夫です",
+              "src/cache.ts:12のempty分岐で何も書き戻しません"
+            ],
+            ["intentional"]
+          )
+        },
+        {
+          ...DEFAULT_CONFIG,
+          questions: { ...DEFAULT_CONFIG.questions, count: 1 }
+        },
+        target()
+      );
+    } finally {
+      stderrSpy.mockRestore();
+    }
+
+    expect(writes.join("")).not.toContain("sekisyo[timing]");
   });
 
   test("同じHEAD・policy・diffの通過記録は非対話hookでも再利用する", async () => {
