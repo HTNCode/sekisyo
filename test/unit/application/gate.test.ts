@@ -681,6 +681,49 @@ describe("runGate", () => {
     expect(store.records.size).toBe(0);
   });
 
+  test("required指定のcustom質問もquestions.count検証に数える", async () => {
+    const store = new MemorySessionStore();
+
+    await expect(
+      runGate(
+        {
+          analyzer: new StaticAnalyzer(),
+          clock: () => "2026-07-18T12:00:00.000Z",
+          model: new ScriptedModel(),
+          store,
+          terminal: new ScriptedTerminal([], [])
+        },
+        {
+          ...DEFAULT_CONFIG,
+          questions: {
+            ...DEFAULT_CONFIG.questions,
+            categories: {
+              boundary: false,
+              ripple: false,
+              alternatives: false,
+              failure: false,
+              performance: false
+            },
+            count: 1,
+            custom: [
+              {
+                name: "ownership",
+                prompt: "Explain the owner.",
+                required: true
+              },
+              {
+                name: "rollback",
+                prompt: "Explain the rollback.",
+                required: true
+              }
+            ]
+          }
+        },
+        target()
+      )
+    ).rejects.toThrow("必須質問カテゴリが2件あります");
+  });
+
   test("一次レビューで修正を選ぶと試問へ進まず中断する", async () => {
     const store = new MemorySessionStore();
     const model = new ScriptedModel();

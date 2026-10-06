@@ -58,7 +58,8 @@ const QuestionsConfigSchema = z
         z
           .object({
             name: safeTextSchema,
-            prompt: safeTextSchema
+            prompt: safeTextSchema,
+            required: z.boolean().optional()
           })
           .strict()
       )
@@ -72,6 +73,9 @@ const AnalysisConfigSchema = z
   .object({
     maxChangedFiles: z.number().int().min(1).max(100_000).default(200),
     maxDiffBytes: z.number().int().min(1).max(100_000_000).default(1_000_000),
+    // Codex analysis model. Left optional so an existing .sekisyo.yml keeps its
+    // policy digest and the Codex CLI default when the key is absent.
+    model: safeTextSchema.optional(),
     timeoutSeconds: z.number().int().min(1).max(3_600).default(180)
   })
   .strict();

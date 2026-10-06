@@ -39,6 +39,36 @@ describe("question policy", () => {
     });
   });
 
+  test("custom質問のrequiredを反映し、省略時はrequired=falseにする", () => {
+    const config = {
+      ...DEFAULT_CONFIG,
+      questions: {
+        ...DEFAULT_CONFIG.questions,
+        custom: [
+          { name: "ownership", prompt: "Explain the owner.", required: true },
+          { name: "accessibility", prompt: "Explain keyboard behavior." }
+        ]
+      }
+    };
+
+    const categories = resolveQuestionCategories(config, analysis);
+
+    expect(
+      categories.find((category) => category.name === "ownership")
+    ).toEqual({
+      name: "ownership",
+      prompt: "Explain the owner.",
+      required: true
+    });
+    expect(
+      categories.find((category) => category.name === "accessibility")
+    ).toEqual({
+      name: "accessibility",
+      prompt: "Explain keyboard behavior.",
+      required: false
+    });
+  });
+
   test("秘密パスは内容ではなくファイル名だけで検出する", () => {
     expect(matchesPrivacyGlob(".env.local", "**/.env*")).toBe(true);
     expect(

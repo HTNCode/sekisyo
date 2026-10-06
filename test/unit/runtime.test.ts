@@ -2,15 +2,20 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 
 import {
+  createGateDependencies,
   prepareGateContext,
+  type PreparedGateContext,
   type PrepareGateContextDependencies
 } from "../../src/commands/runtime.ts";
-import { DEFAULT_CONFIG } from "../../src/config/index.ts";
+import { createPolicyDigest, DEFAULT_CONFIG } from "../../src/config/index.ts";
 import { createPhaseTimer } from "../../src/observability/timing.ts";
 import { fingerprint } from "../../src/domain/fingerprint.ts";
+import type { GateTarget } from "../../src/application/index.ts";
 import type { SessionRecord } from "../../src/domain/session.ts";
 import type {
+  DiffAnalyzer,
   GitRepository,
+  QaModel,
   RepositoryDiffTarget,
   RepositoryRange,
   SessionStore
@@ -158,5 +163,78 @@ describe("prepareGateContext", () => {
     expect(gitPathRoot).toBe(repoRoot);
     expect(prepared.store).toBe(store);
     expect(prepared.target.diffDigest).toBe(fingerprint(DIFF));
+  });
+});
+
+const stubAnalyzer: DiffAnalyzer = {
+  analyze: async () => ({
+    attention: [],
+    filesChanged: 1,
+    findings: [],
+    risks: [],
+    summary: "summary"
+  })
+};
+
+const stubModel: QaModel = {
+  generateQuestions: async () => [],
+  judgeAnswer: async () => ({ feedback: "ok", passed: true }),
+  summarize: async () => ({
+    decisions: [],
+    intent: "intent",
+    risks: [],
+    unresolved: [],
+    verification: []
+  })
+};
+
+function gateTarget(): GateTarget {
+  return {
+    analysisTarget: { kind: "base", baseRef: BASE_OID },
+    base: BASE_OID,
+    changedFiles: ["file.ts"],
+    diff: DIFF,
+    diffDigest: fingerprint(DIFF),
+    head: HEAD_OID,
+    policyDigest: createPolicyDigest(DEFAULT_CONFIG),
+    ref: `refs/heads/feature@${ZERO_OID}`,
+    remote: "origin",
+    repoRoot: "C:\\repo"
+  };
+}
+
+function analyzerOptionsFor(model: string | undefined): {
+  readonly model?: string;
+} {
+  const context: PreparedGateContext = {
+    config: {
+      ...DEFAULT_CONFIG,
+      analysis: {
+        ...DEFAULT_CONFIG.analysis,
+        ...(model === undefined ? {} : { model })
+      }
+    },
+    store: new EmptySessionStore(),
+    target: gateTarget()
+  };
+  let received: { readonly model?: string } = {};
+  createGateDependencies(context, undefined, {
+    createAnalyzer: (options) => {
+      received = options;
+      return stubAnalyzer;
+    },
+    createModel: () => stubModel
+  });
+  return received;
+}
+
+describe("createGateDependencies", () => {
+  test("analysis.modelをanalyzerへ渡す", () => {
+    expect(analyzerOptionsFor("gpt-5.6-codex").model).toBe("gpt-5.6-codex");
+  });
+
+  test("analysis.model未指定ならanalyzerにmodelキーを渡さない", () => {
+    const options = analyzerOptionsFor(undefined);
+    expect(Object.hasOwn(options, "model")).toBe(false);
   });
 });

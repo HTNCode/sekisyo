@@ -67,6 +67,7 @@ export interface PrepareGateContextDependencies {
 
 export interface GateDependencyFactories {
   readonly createAnalyzer: (options: {
+    readonly model?: string;
     readonly strictness: ReviewStrictness;
     readonly timeoutMs: number;
     readonly timer: PhaseTimer;
@@ -229,6 +230,9 @@ export function createGateDependencies(
 ): GateDependencies {
   return {
     analyzer: factories.createAnalyzer({
+      ...(context.config.analysis.model === undefined
+        ? {}
+        : { model: context.config.analysis.model }),
       strictness: context.config.strictness,
       timeoutMs: context.config.analysis.timeoutSeconds * 1_000,
       timer
