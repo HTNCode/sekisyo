@@ -286,11 +286,11 @@ behavior question.
 
 A `custom` entry is optional by default. Add `required: true` to it when the
 question must always be asked. Keep `questions.count` at least as large as the
-number of built-in categories marked `required`, plus the number of `custom`
-entries marked `required`, plus any built-in category that a matching `paths`
-entry marks `required` for the files in the change. Because `paths` overrides
-depend on which files changed, the count is checked at run time: the gate aborts
-after the diff analysis, not when the config is loaded.
+number of built-in categories that are `required` once any matching `paths`
+override has been applied, plus the number of `custom` entries marked
+`required`. Because `paths` overrides depend on which files changed, the count
+is checked at run time: the gate aborts after the diff analysis, not when the
+config is loaded.
 
 Generated questions carry a fixed category set, so every custom question is
 reported as `custom`. Sekisyo can therefore verify that at least as many custom

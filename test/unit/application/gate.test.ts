@@ -796,8 +796,10 @@ describe("runGate", () => {
           clock: () => "2026-07-18T12:00:00.000Z",
           model,
           store,
+          // 有効な回答を1つ残す。件数チェックを外したときに入力切れの
+          // 再入力ループでハングせず、rejects不成立で落ちるようにする。
           terminal: new ScriptedTerminal(
-            [...VALID_REVIEW_PARTS],
+            [...VALID_REVIEW_PARTS, "src/cache.ts:12のempty分岐で説明します"],
             ["intentional"]
           )
         },

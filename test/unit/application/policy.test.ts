@@ -6,6 +6,7 @@ import {
   resolveQuestionCategories
 } from "../../../src/application/policy.ts";
 import { DEFAULT_CONFIG } from "../../../src/config/defaults.ts";
+import { BUILT_IN_QUESTION_CATEGORIES } from "../../../src/domain/questions.ts";
 
 const analysis = {
   attention: [],
@@ -67,6 +68,33 @@ describe("question policy", () => {
       prompt: "Explain keyboard behavior.",
       required: false
     });
+  });
+
+  // gate.ts は「組み込みカテゴリは名前一致で検証し、それ以外はcustomとして
+  // 件数で検証する」ため、policy が組み込みとして返す名前の集合が domain の
+  // 定義と一致していることが前提になる。ずれると必須検証が静かに壊れる。
+  test("policyが返す組み込みカテゴリ名はdomainの定義と一致する", () => {
+    const builtInNames = resolveQuestionCategories(
+      {
+        ...DEFAULT_CONFIG,
+        questions: {
+          ...DEFAULT_CONFIG.questions,
+          categories: {
+            boundary: true,
+            ripple: true,
+            alternatives: true,
+            failure: true,
+            performance: true
+          },
+          custom: []
+        }
+      },
+      analysis
+    ).map((category) => category.name);
+
+    expect(builtInNames.toSorted()).toEqual(
+      [...BUILT_IN_QUESTION_CATEGORIES].toSorted()
+    );
   });
 
   test("秘密パスは内容ではなくファイル名だけで検出する", () => {
