@@ -724,6 +724,138 @@ describe("runGate", () => {
     ).rejects.toThrow("必須質問カテゴリが2件あります");
   });
 
+  test("required指定のcustom質問はcustom質問の生成で満たされpassedになる", async () => {
+    const store = new MemorySessionStore();
+    const customQuestion: Question = {
+      category: "custom",
+      evidence: ["src/cache.ts:10"],
+      id: "q-custom-1",
+      learningObjective: "所有者を説明できる",
+      prompt: "この変更後、どのチームが所有しますか?",
+      rubric: ["所有チームを具体的に挙げる"]
+    };
+    const model: QaModel = {
+      generateQuestions: async () => [customQuestion],
+      judgeAnswer: async () => ({
+        feedback: "具体的に説明できています",
+        passed: true
+      }),
+      summarize: async () => summary
+    };
+
+    const session = await runGate(
+      {
+        analyzer: new StaticAnalyzer(),
+        clock: () => "2026-07-18T12:00:00.000Z",
+        model,
+        store,
+        terminal: new ScriptedTerminal(
+          [...VALID_REVIEW_PARTS, "基盤チームが所有します"],
+          ["intentional"]
+        )
+      },
+      {
+        ...DEFAULT_CONFIG,
+        questions: {
+          ...DEFAULT_CONFIG.questions,
+          categories: {
+            boundary: false,
+            ripple: false,
+            alternatives: false,
+            failure: false,
+            performance: false
+          },
+          count: 1,
+          custom: [
+            {
+              name: "ownership",
+              prompt: "Explain the owner.",
+              required: true
+            }
+          ]
+        }
+      },
+      target()
+    );
+
+    expect(session.status).toBe("passed");
+  });
+
+  test("required指定のcustom質問がcustom質問として生成されなければ落ちる", async () => {
+    const store = new MemorySessionStore();
+    const model: QaModel = {
+      generateQuestions: async () => [initialQuestion],
+      judgeAnswer: async () => ({ feedback: "ok", passed: true }),
+      summarize: async () => summary
+    };
+
+    await expect(
+      runGate(
+        {
+          analyzer: new StaticAnalyzer(),
+          clock: () => "2026-07-18T12:00:00.000Z",
+          model,
+          store,
+          terminal: new ScriptedTerminal(
+            [...VALID_REVIEW_PARTS],
+            ["intentional"]
+          )
+        },
+        {
+          ...DEFAULT_CONFIG,
+          questions: {
+            ...DEFAULT_CONFIG.questions,
+            count: 1,
+            custom: [
+              {
+                name: "ownership",
+                prompt: "Explain the owner.",
+                required: true
+              }
+            ]
+          }
+        },
+        target()
+      )
+    ).rejects.toThrow("必須のcustom質問が1件必要ですが、生成結果は0件です。");
+  });
+
+  test("required指定の組み込みカテゴリは名前で生成結果を検証する", async () => {
+    const store = new MemorySessionStore();
+    const model: QaModel = {
+      generateQuestions: async () => [initialQuestion],
+      judgeAnswer: async () => ({ feedback: "ok", passed: true }),
+      summarize: async () => summary
+    };
+
+    await expect(
+      runGate(
+        {
+          analyzer: new StaticAnalyzer(),
+          clock: () => "2026-07-18T12:00:00.000Z",
+          model,
+          store,
+          terminal: new ScriptedTerminal(
+            [...VALID_REVIEW_PARTS],
+            ["intentional"]
+          )
+        },
+        {
+          ...DEFAULT_CONFIG,
+          questions: {
+            ...DEFAULT_CONFIG.questions,
+            categories: {
+              ...DEFAULT_CONFIG.questions.categories,
+              failure: "required"
+            },
+            count: 1
+          }
+        },
+        target()
+      )
+    ).rejects.toThrow("必須質問カテゴリが生成結果にありません: failure");
+  });
+
   test("一次レビューで修正を選ぶと試問へ進まず中断する", async () => {
     const store = new MemorySessionStore();
     const model = new ScriptedModel();

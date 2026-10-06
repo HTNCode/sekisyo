@@ -96,8 +96,11 @@ analysis:
   model: gpt-5.6-codex # diff analysis (Codex CLI)
 ```
 
-Omit `analysis.model` to let the Codex CLI use its own configured default. Both
-keys are part of the policy digest, so changing either invalidates existing pass
+Omit `analysis.model` to use the Codex CLI's built-in default. Sekisyo always
+runs Codex with `--ignore-user-config`, so a model set in `~/.codex/config.toml`
+is not used; `analysis.model` is the only way to choose the analysis model. The
+value must be a plain model identifier that your Codex CLI accepts. Both keys
+are part of the policy digest, so changing either invalidates existing pass
 records.
 
 ## Commands
@@ -282,10 +285,18 @@ can add accessibility guidance, while a billing path can require a failure
 behavior question.
 
 A `custom` entry is optional by default. Add `required: true` to it when the
-question must always be asked; the gate then refuses to run until
-`questions.count` is at least as large as the number of required categories.
-Keep `questions.count` at least as large as the number of built-in categories
-marked `required` plus the number of `custom` entries marked `required`.
+question must always be asked. Keep `questions.count` at least as large as the
+number of built-in categories marked `required`, plus the number of `custom`
+entries marked `required`, plus any built-in category that a matching `paths`
+entry marks `required` for the files in the change. Because `paths` overrides
+depend on which files changed, the count is checked at run time: the gate aborts
+after the diff analysis, not when the config is loaded.
+
+Generated questions carry a fixed category set, so every custom question is
+reported as `custom`. Sekisyo can therefore verify that at least as many custom
+questions were generated as there are required `custom` entries, but not which
+named entry each one came from. Adding or removing `required` changes the policy
+digest, so it invalidates existing pass records like any other policy change.
 
 The four default categories avoid summary questions:
 

@@ -127,6 +127,28 @@ analysis:
     expect(() => parseConfig({ analysis: { model: "   " } })).toThrow();
   });
 
+  test.each([
+    ["空白を含む", "gpt 5.6 codex"],
+    ["改行を含む", "gpt-5.6-codex\n--foo"],
+    ["復帰を含む", "gpt-5.6-codex\r--foo"],
+    ["フラグに見える", "--help"],
+    ["ハイフンで始まる", "-x"],
+    ["シェル記号を含む", "gpt;rm -rf /"],
+    ["引用符を含む", 'gpt"& calc &"'],
+    ["制御文字を含む", "gpt\u0007codex"],
+    ["双方向制御文字を含む", "\u202emodel"],
+    ["128文字を超える", `gpt-${"a".repeat(130)}`]
+  ])("argv値として危険なanalysis.modelを拒否する: %s", (_label, model) => {
+    expect(() => parseConfig({ analysis: { model } })).toThrow();
+  });
+
+  test.each(["gpt-5.6-codex", "o4-mini", "openai/gpt-5.6", "gpt-5.6:latest"])(
+    "妥当なモデルIDを受け付ける: %s",
+    (model) => {
+      expect(parseConfig({ analysis: { model } }).analysis.model).toBe(model);
+    }
+  );
+
   test("新しいキーの指定でpolicy digestが変わり、未指定なら変わらない", () => {
     const baseline = createPolicyDigest(parseConfig({}));
     expect(createPolicyDigest(parseConfig({ analysis: {} }))).toBe(baseline);
