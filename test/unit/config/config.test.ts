@@ -83,4 +83,90 @@ questions:
     const second = parseConfig({ version: 1 });
     expect(createPolicyDigest(first)).toBe(createPolicyDigest(second));
   });
+
+  test("custom質問のrequiredを受け付け、省略時はキーを増やさない", () => {
+    const config = parseConfigYaml(`
+version: 1
+questions:
+  custom:
+    - name: ownership
+      prompt: Explain the owner.
+      required: true
+    - name: accessibility
+      prompt: Explain keyboard behavior.
+`);
+    expect(config.questions.custom[0]?.required).toBe(true);
+    expect(config.questions.custom[1]?.required).toBeUndefined();
+    expect(Object.hasOwn(config.questions.custom[1] ?? {}, "required")).toBe(
+      false
+    );
+  });
+
+  test("custom質問のrequiredはbooleanに限る", () => {
+    expect(() =>
+      parseConfig({
+        questions: {
+          custom: [{ name: "ownership", prompt: "Explain.", required: "yes" }]
+        }
+      })
+    ).toThrow();
+  });
+
+  test("analysis.modelを受け付け、省略時はundefinedのままにする", () => {
+    expect(
+      parseConfigYaml(`
+version: 1
+analysis:
+  model: gpt-5.6-codex
+`).analysis.model
+    ).toBe("gpt-5.6-codex");
+    expect(parseConfig({}).analysis.model).toBeUndefined();
+  });
+
+  test("analysis.modelの空文字を拒否する", () => {
+    expect(() => parseConfig({ analysis: { model: "   " } })).toThrow();
+  });
+
+  test.each([
+    ["空白を含む", "gpt 5.6 codex"],
+    ["改行を含む", "gpt-5.6-codex\n--foo"],
+    ["復帰を含む", "gpt-5.6-codex\r--foo"],
+    ["フラグに見える", "--help"],
+    ["ハイフンで始まる", "-x"],
+    ["シェル記号を含む", "gpt;rm -rf /"],
+    ["引用符を含む", 'gpt"& calc &"'],
+    ["制御文字を含む", "gpt\u0007codex"],
+    ["双方向制御文字を含む", "\u202emodel"],
+    ["128文字を超える", `gpt-${"a".repeat(130)}`]
+  ])("argv値として危険なanalysis.modelを拒否する: %s", (_label, model) => {
+    expect(() => parseConfig({ analysis: { model } })).toThrow();
+  });
+
+  test.each(["gpt-5.6-codex", "o4-mini", "openai/gpt-5.6", "gpt-5.6:latest"])(
+    "妥当なモデルIDを受け付ける: %s",
+    (model) => {
+      expect(parseConfig({ analysis: { model } }).analysis.model).toBe(model);
+    }
+  );
+
+  test("新しいキーの指定でpolicy digestが変わり、未指定なら変わらない", () => {
+    const baseline = createPolicyDigest(parseConfig({}));
+    expect(createPolicyDigest(parseConfig({ analysis: {} }))).toBe(baseline);
+    expect(
+      createPolicyDigest(parseConfig({ analysis: { model: "gpt-5.6-codex" } }))
+    ).not.toBe(baseline);
+
+    const customOnly = parseConfig({
+      questions: { custom: [{ name: "ownership", prompt: "Explain." }] }
+    });
+    expect(
+      createPolicyDigest(
+        parseConfig({
+          questions: {
+            custom: [{ name: "ownership", prompt: "Explain.", required: true }]
+          }
+        })
+      )
+    ).not.toBe(createPolicyDigest(customOnly));
+  });
 });

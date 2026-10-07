@@ -85,7 +85,7 @@ export function resolveQuestionCategories(
   const custom = config.questions.custom.map((category) => ({
     name: category.name,
     prompt: category.prompt,
-    required: false
+    required: category.required ?? false
   }));
 
   return [...builtIn, ...custom];

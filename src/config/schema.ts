@@ -12,6 +12,19 @@ const safeTextSchema = z
   .max(4_096)
   .refine((value) => !value.includes("\0"), "Value must not contain NUL.");
 
+// analysis.model becomes a Codex CLI argv value, so it is restricted to a plain
+// model identifier: no whitespace, control characters, or leading "-" that the
+// CLI would read as another flag.
+const modelNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(
+    /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/u,
+    "Model must be a plain model identifier."
+  );
+
 const categorySettingSchema = z.union([z.boolean(), z.literal("required")]);
 
 const categoryFlagsShape = {
@@ -58,7 +71,8 @@ const QuestionsConfigSchema = z
         z
           .object({
             name: safeTextSchema,
-            prompt: safeTextSchema
+            prompt: safeTextSchema,
+            required: z.boolean().optional()
           })
           .strict()
       )
@@ -72,6 +86,9 @@ const AnalysisConfigSchema = z
   .object({
     maxChangedFiles: z.number().int().min(1).max(100_000).default(200),
     maxDiffBytes: z.number().int().min(1).max(100_000_000).default(1_000_000),
+    // Codex analysis model. Left optional so an existing .sekisyo.yml keeps its
+    // policy digest and the Codex CLI built-in default when the key is absent.
+    model: modelNameSchema.optional(),
     timeoutSeconds: z.number().int().min(1).max(3_600).default(180)
   })
   .strict();

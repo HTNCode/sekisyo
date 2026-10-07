@@ -1,9 +1,10 @@
 import type { SekisyoConfig } from "../config/schema.ts";
 import type { ReviewFinding } from "../domain/analysis.ts";
-import type {
-  AnswerJudgment,
-  QaExchange,
-  Question
+import {
+  BUILT_IN_QUESTION_CATEGORIES,
+  type AnswerJudgment,
+  type QaExchange,
+  type Question
 } from "../domain/questions.ts";
 import {
   canTransitionSession,
@@ -144,6 +145,7 @@ function location(path: string, line?: number): string {
   return line === undefined ? path : `${path}:${line}`;
 }
 
+const BUILT_IN_CATEGORY_NAMES = new Set<string>(BUILT_IN_QUESTION_CATEGORIES);
 const MAX_REVIEW_REASON_ATTEMPTS_BEFORE_CHOICE = 3;
 const MAX_REVIEW_REASON_JUDGMENTS = 2;
 
@@ -653,16 +655,32 @@ async function runGateSession(
     throw questionGenerationResult.error;
   }
   const questions = questionGenerationResult.value;
+  // Generated questions carry the fixed Question["category"] enum, so every
+  // custom category collapses to "custom". Built-in categories are checked by
+  // name; required custom categories can only be checked by count.
   const missingRequired = categories
-    .filter((category) => category.required)
     .filter(
       (category) =>
+        category.required &&
+        BUILT_IN_CATEGORY_NAMES.has(category.name) &&
         !questions.some((question) => question.category === category.name)
     )
     .map((category) => category.name);
   if (missingRequired.length > 0) {
     throw new Error(
       `必須質問カテゴリが生成結果にありません: ${missingRequired.join(", ")}`
+    );
+  }
+  const requiredCustomCount = categories.filter(
+    (category) =>
+      category.required && !BUILT_IN_CATEGORY_NAMES.has(category.name)
+  ).length;
+  const generatedCustomCount = questions.filter(
+    (question) => question.category === "custom"
+  ).length;
+  if (generatedCustomCount < requiredCustomCount) {
+    throw new Error(
+      `必須のcustom質問が${requiredCustomCount}件必要ですが、生成結果は${generatedCustomCount}件です。`
     );
   }
   session = await saveTransition(dependencies, session, "questioning", {

@@ -708,6 +708,21 @@ describe("CodexDiffAnalyzer", () => {
     );
   });
 
+  test("model指定時だけcodex引数に--modelを付ける", async () => {
+    const withModel = createAnalyzer({}, validOutput, seedMinimalRepository, {
+      model: "gpt-5.6-codex"
+    });
+    await withModel.analyzer.analyze(validInput());
+    const codexArgv = withModel.runner.specs.at(-1)?.argv ?? [];
+    expect(codexArgv[0]).toBe("codex");
+    expect(codexArgv.indexOf("--model")).toBeGreaterThan(-1);
+    expect(codexArgv[codexArgv.indexOf("--model") + 1]).toBe("gpt-5.6-codex");
+
+    const withoutModel = createAnalyzer();
+    await withoutModel.analyzer.analyze(validInput());
+    expect(withoutModel.runner.specs.at(-1)?.argv).not.toContain("--model");
+  });
+
   test("timerを渡したときだけフェーズ別の所要時間を出力する", async () => {
     const lines: string[] = [];
     const { analyzer } = createAnalyzer(

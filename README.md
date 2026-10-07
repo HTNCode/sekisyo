@@ -86,6 +86,23 @@ GPT-5.6 calls use strict structured outputs and `store: false`. The local pass
 record remains under Git's private directory until `sekisyo pr` successfully
 transfers the explanation record to the pull request body.
 
+Each side takes its model from its own key in `.sekisyo.yml`. The top-level
+`model` selects the OpenAI model used for the oral examination, and
+`analysis.model` selects the model passed to the Codex CLI as `--model`:
+
+```yaml
+model: gpt-5.6-sol # oral examination (OpenAI Responses API)
+analysis:
+  model: gpt-5.6-codex # diff analysis (Codex CLI)
+```
+
+Omit `analysis.model` to use the Codex CLI's built-in default. Sekisyo always
+runs Codex with `--ignore-user-config`, so a model set in `~/.codex/config.toml`
+is not used; `analysis.model` is the only way to choose the analysis model. The
+value must be a plain model identifier that your Codex CLI accepts. Both keys
+are part of the policy digest, so changing either invalidates existing pass
+records.
+
 ## Commands
 
 | Command                 | Purpose                                             |
@@ -249,6 +266,10 @@ questions:
     - name: accessibility
       prompt: >-
         For UI changes, ask about keyboard and screen-reader behavior.
+    - name: ownership
+      required: true
+      prompt: >-
+        Name the team that owns the changed module after this change.
   paths:
     "src/billing/**":
       categories:
@@ -261,8 +282,21 @@ category to `true`, `false`, or `required`, add domain-specific question types
 under `custom` with a unique `name` and concrete `prompt`, and use `paths` to
 strengthen built-in categories for matching files. For example, a frontend team
 can add accessibility guidance, while a billing path can require a failure
-behavior question. Keep `questions.count` at least as large as the number of
-built-in categories marked `required`.
+behavior question.
+
+A `custom` entry is optional by default. Add `required: true` to it when the
+question must always be asked. Keep `questions.count` at least as large as the
+number of built-in categories that are `required` once any matching `paths`
+override has been applied, plus the number of `custom` entries marked
+`required`. Because `paths` overrides depend on which files changed, the count
+is checked at run time: the gate aborts after the diff analysis, not when the
+config is loaded.
+
+Generated questions carry a fixed category set, so every custom question is
+reported as `custom`. Sekisyo can therefore verify that at least as many custom
+questions were generated as there are required `custom` entries, but not which
+named entry each one came from. Adding or removing `required` changes the policy
+digest, so it invalidates existing pass records like any other policy change.
 
 The four default categories avoid summary questions:
 
