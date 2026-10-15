@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { PassThrough, Readable, Writable } from "node:stream";
-import { ConsoleTerminal } from "../../../../src/adapters/terminal/consoleTerminal.ts";
+import { ConsoleTerminal } from "../../../../src/adapters/terminal/console-terminal.ts";
 import { TerminalInputClosedError } from "../../../../src/ports/terminal.ts";
 
 function collector(): { readonly stream: Writable; text: () => string } {

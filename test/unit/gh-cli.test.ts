@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { GhCliPrPublisher } from "../../src/adapters/github/ghCli.ts";
+import { GhCliPrPublisher } from "../../src/adapters/github/gh-cli.ts";
 import type {
   CommandExecutor,
   CommandResult

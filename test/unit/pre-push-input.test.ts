@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   parsePrePushInput,
   shouldAssessUpdate
-} from "../../src/hook/prePushInput.ts";
+} from "../../src/hook/pre-push-input.ts";
 
 const SHA_ONE = "1".repeat(40);
 const SHA_TWO = "2".repeat(40);

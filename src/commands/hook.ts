@@ -6,12 +6,15 @@ import {
   type GateDependencies,
   type RunGateOptions
 } from "../application/index.ts";
-import { createConsoleTerminal } from "../adapters/terminal/consoleTerminal.ts";
-import { resolveCommit } from "../adapters/git/gitRepository.ts";
+import { createConsoleTerminal } from "../adapters/terminal/console-terminal.ts";
+import { resolveCommit } from "../adapters/git/git-repository.ts";
 import { createSessionFingerprint } from "../domain/fingerprint.ts";
 import type { SessionRecord } from "../domain/session.ts";
 import type { Terminal } from "../ports/terminal.ts";
-import { parsePrePushInput, shouldAssessUpdate } from "../hook/prePushInput.ts";
+import {
+  parsePrePushInput,
+  shouldAssessUpdate
+} from "../hook/pre-push-input.ts";
 import {
   createGateDependencies,
   prepareGateContext,

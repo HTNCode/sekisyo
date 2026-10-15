@@ -1,5 +1,5 @@
 import { EXIT_CODE, GateError, runGate } from "../application/index.ts";
-import { createConsoleTerminal } from "../adapters/terminal/consoleTerminal.ts";
+import { createConsoleTerminal } from "../adapters/terminal/console-terminal.ts";
 import { prepareGate } from "./runtime.ts";
 
 export interface AskOptions {

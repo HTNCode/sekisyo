@@ -6,7 +6,7 @@ import type {
   GateTarget
 } from "../../src/application/gate.ts";
 import { PROMPT_VERSION, runGate } from "../../src/application/gate.ts";
-import { ConsoleTerminal } from "../../src/adapters/terminal/consoleTerminal.ts";
+import { ConsoleTerminal } from "../../src/adapters/terminal/console-terminal.ts";
 import { DEFAULT_CONFIG, createPolicyDigest } from "../../src/config/index.ts";
 import { runPrePushHook } from "../../src/commands/hook.ts";
 import {
