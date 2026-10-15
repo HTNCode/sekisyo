@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { AtomicJsonSessionStore } from "../../src/adapters/filesystem/atomic-json-session-store.ts";
-import { readRepositoryDiff } from "../../src/adapters/git/gitRepository.ts";
+import { readRepositoryDiff } from "../../src/adapters/git/git-repository.ts";
 import { PROMPT_VERSION } from "../../src/application/gate.ts";
 import { createPolicyDigest, DEFAULT_CONFIG } from "../../src/config/index.ts";
 import { runPrePushHook } from "../../src/commands/hook.ts";

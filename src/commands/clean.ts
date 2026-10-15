@@ -1,6 +1,6 @@
 import { EXIT_CODE, GateError } from "../application/index.ts";
-import { resolveCommit } from "../adapters/git/gitRepository.ts";
-import { createConsoleTerminal } from "../adapters/terminal/consoleTerminal.ts";
+import { resolveCommit } from "../adapters/git/git-repository.ts";
+import { createConsoleTerminal } from "../adapters/terminal/console-terminal.ts";
 import { createSessionStore } from "./runtime.ts";
 
 export interface CleanOptions {

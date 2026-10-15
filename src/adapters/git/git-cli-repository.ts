@@ -20,7 +20,7 @@ import {
   readChangedFiles,
   readRepositoryDiff,
   resolveDiffBase
-} from "./gitRepository.ts";
+} from "./git-repository.ts";
 
 const COMMAND_TIMEOUT_MS = 30_000;
 

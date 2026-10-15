@@ -1,6 +1,6 @@
-import { createPrPublisher } from "../adapters/github/ghCli.ts";
+import { createPrPublisher } from "../adapters/github/gh-cli.ts";
 import { createOpenAIQaModel } from "../adapters/openai/index.ts";
-import { resolveCommit, runGit } from "../adapters/git/gitRepository.ts";
+import { resolveCommit, runGit } from "../adapters/git/git-repository.ts";
 import { ensureSessionSummary, PROMPT_VERSION } from "../application/gate.ts";
 import { createPolicyDigest, loadSekisyoConfig } from "../config/index.ts";
 import { fingerprint } from "../domain/fingerprint.ts";

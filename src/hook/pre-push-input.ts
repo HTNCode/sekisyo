@@ -1,4 +1,4 @@
-import { isObjectId, isZeroObjectId } from "../adapters/git/gitRepository.ts";
+import { isObjectId, isZeroObjectId } from "../adapters/git/git-repository.ts";
 
 const DEFAULT_MAX_BYTES = 64 * 1024;
 const DEFAULT_MAX_UPDATES = 100;

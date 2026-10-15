@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GitCliRepository } from "../../src/adapters/git/gitCliRepository.ts";
+import { GitCliRepository } from "../../src/adapters/git/git-cli-repository.ts";
 
 const temporaryDirectories: string[] = [];
 

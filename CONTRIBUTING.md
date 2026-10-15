@@ -37,5 +37,8 @@ credentials.
 - `test/unit`: pure and adapter tests with fakes
 - `test/integration`: temporary Git repository tests
 
+Name files under `src` and `test` in kebab-case (for example,
+`git-cli-repository.ts` and `pre-push-input.test.ts`).
+
 Keep changes atomic and use conventional prefixes such as `feat:`, `fix:`,
 `test:`, and `docs:`.

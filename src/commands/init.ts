@@ -1,6 +1,6 @@
 import { EXIT_CODE } from "../application/errors.ts";
-import { findRepositoryRoot } from "../adapters/git/gitRepository.ts";
-import { createConsoleTerminal } from "../adapters/terminal/consoleTerminal.ts";
+import { findRepositoryRoot } from "../adapters/git/git-repository.ts";
+import { createConsoleTerminal } from "../adapters/terminal/console-terminal.ts";
 import {
   SEKISYO_CONFIG_FILE,
   SEKISYO_CONFIG_TEMPLATE

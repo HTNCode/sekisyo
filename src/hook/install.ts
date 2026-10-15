@@ -4,7 +4,7 @@ import { runCommand } from "../adapters/git/command.ts";
 import {
   findRepositoryRoot,
   getGitPath
-} from "../adapters/git/gitRepository.ts";
+} from "../adapters/git/git-repository.ts";
 import { SEKISYO_VERSION } from "../version.ts";
 
 export const MANAGED_HOOK_MARKER = "# sekisyo-managed-hook:v1";

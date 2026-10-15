@@ -3,14 +3,14 @@ import { AtomicJsonSessionStore } from "../adapters/filesystem/index.ts";
 import {
   createGitRepository,
   type GitCliRepository
-} from "../adapters/git/gitCliRepository.ts";
+} from "../adapters/git/git-cli-repository.ts";
 import {
   findRepositoryRoot,
   isObjectId,
   isZeroObjectId,
   runGit
-} from "../adapters/git/gitRepository.ts";
-import { createPrPublisher } from "../adapters/github/ghCli.ts";
+} from "../adapters/git/git-repository.ts";
+import { createPrPublisher } from "../adapters/github/gh-cli.ts";
 import { createOpenAIQaModel } from "../adapters/openai/index.ts";
 import {
   excludedDiffPaths,
