@@ -26,9 +26,13 @@ provider (OpenAI by default, or Anthropic, Google, or an OpenAI-compatible
 endpoint). Endpoints and API keys for these providers are read only from the
 environment, never from the committed `.sekisyo.yml`. Configure exclusions for
 sensitive paths. A changed excluded path blocks analysis before its contents are
-read. Codex receives an isolated snapshot with Git metadata, symlinks,
-agent-control files, and excluded paths removed. Raw API keys and raw diffs must
-never be stored in local pass records or PR bodies.
+read. The Codex and Claude Code analysis engines receive an isolated snapshot
+with Git metadata, symlinks, agent-control files, and excluded paths removed,
+and only an allowlist of environment variables: platform basics plus what each
+needs to sign in (and, for Claude Code, proxy and CA settings). With
+`analysis.engine: api`, the bounded raw diff is sent to the configured provider
+instead. Raw API keys and raw diffs must never be stored in local pass records
+or PR bodies.
 
 Child `git` and `gh` processes do not receive model-provider environment
 variables (`OPENAI_API_KEY`, `OPENAI_ADMIN_KEY`, `OPENAI_BASE_URL`, the OpenAI

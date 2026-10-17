@@ -42,7 +42,7 @@ export interface CreateOpenAIQaModelOptions extends OpenAIQaModelOptions {
 }
 
 /** Responses API の応答を、プロバイダ共通の状態へ揃える。 */
-class OpenAIResponsesStructuredClient implements StructuredOutputClient {
+export class OpenAIResponsesStructuredClient implements StructuredOutputClient {
   readonly #client: OpenAIResponsesClient;
 
   constructor(client: OpenAIResponsesClient) {
@@ -105,5 +105,20 @@ export function createOpenAIQaModel(
   return new OpenAIQaModel(
     new OpenAISdkResponsesClient(client),
     resolvedOptions
+  );
+}
+
+/** 差分解析など、Q&A 以外で Responses API の構造化出力を使うときのクライアント。 */
+export function createOpenAIStructuredClient(options: {
+  readonly maxRetries?: number;
+  readonly timeoutMs: number;
+}): OpenAIResponsesStructuredClient {
+  return new OpenAIResponsesStructuredClient(
+    new OpenAISdkResponsesClient(
+      new OpenAI({
+        maxRetries: options.maxRetries ?? 2,
+        timeout: options.timeoutMs
+      })
+    )
   );
 }

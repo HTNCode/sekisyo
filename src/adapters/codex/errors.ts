@@ -12,39 +12,69 @@ export type CodexAdapterErrorCode =
   | "timeout"
   | "unknown";
 
-const SAFE_MESSAGES: Readonly<Record<CodexAdapterErrorCode, string>> = {
-  aborted: "The Codex analysis was cancelled.",
-  failed_event: "Codex reported that the analysis failed.",
-  filesystem: "The temporary Codex workspace could not be managed.",
-  invalid_event_stream: "Codex returned an invalid event stream.",
-  invalid_input: "The Codex adapter received invalid input.",
-  invalid_output: "Codex returned invalid structured output.",
-  missing_output: "Codex did not create the structured output file.",
-  non_zero_exit: "Codex exited without completing the analysis.",
-  not_installed: "The Codex executable could not be started.",
-  repository_preparation:
-    "The clean repository snapshot for Codex could not be prepared.",
-  timeout: "The Codex analysis timed out.",
-  unknown: "The Codex analysis failed."
-};
+// 利用者に表示されるため、解析エンジンの出力や差分本文は含めない。
+function safeMessage(engine: string, code: CodexAdapterErrorCode): string {
+  switch (code) {
+    case "aborted":
+      return `The ${engine} analysis was cancelled.`;
+    case "failed_event":
+      return `${engine} reported that the analysis failed.`;
+    case "filesystem":
+      return `The temporary ${engine} workspace could not be managed.`;
+    case "invalid_event_stream":
+      return `${engine} returned an invalid event stream.`;
+    case "invalid_input":
+      return `The ${engine} adapter received invalid input.`;
+    case "invalid_output":
+      return `${engine} returned invalid structured output.`;
+    case "missing_output":
+      return `${engine} did not create the structured output file.`;
+    case "non_zero_exit":
+      return `${engine} exited without completing the analysis.`;
+    case "not_installed":
+      return `The ${engine} executable could not be started.`;
+    case "repository_preparation":
+      return `The clean repository snapshot for ${engine} could not be prepared.`;
+    case "timeout":
+      return `The ${engine} analysis timed out.`;
+    case "unknown":
+      return `The ${engine} analysis failed.`;
+  }
+}
 
-export class CodexAdapterError extends Error {
+export interface AnalysisEngineErrorOptions {
+  readonly exitCode?: number;
+  readonly retryable?: boolean;
+}
+
+/** 差分解析エンジン共通のエラー。どのエンジンの失敗かを engine で示す。 */
+export class AnalysisEngineError extends Error {
   readonly code: CodexAdapterErrorCode;
+  readonly engine: string;
   readonly exitCode: number | undefined;
   readonly retryable: boolean;
 
   constructor(
+    engine: string,
     code: CodexAdapterErrorCode,
-    options: {
-      readonly exitCode?: number;
-      readonly retryable?: boolean;
-    } = {}
+    options: AnalysisEngineErrorOptions = {}
   ) {
-    super(SAFE_MESSAGES[code]);
-    this.name = "CodexAdapterError";
+    super(safeMessage(engine, code));
+    this.name = "AnalysisEngineError";
     this.code = code;
+    this.engine = engine;
     this.exitCode = options.exitCode;
     this.retryable = options.retryable ?? false;
+  }
+}
+
+export class CodexAdapterError extends AnalysisEngineError {
+  constructor(
+    code: CodexAdapterErrorCode,
+    options: AnalysisEngineErrorOptions = {}
+  ) {
+    super("Codex", code, options);
+    this.name = "CodexAdapterError";
   }
 }
 

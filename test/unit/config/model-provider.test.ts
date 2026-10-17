@@ -78,3 +78,20 @@ describe("記録上のモデル識別子", () => {
     });
   });
 });
+
+describe("analysis.engine", () => {
+  test("既定の3種類だけを受け付ける", () => {
+    for (const engine of ["codex", "claude-code", "api"] as const) {
+      expect(parseConfig({ analysis: { engine } }).analysis.engine).toBe(
+        engine
+      );
+    }
+    expect(() => parseConfig({ analysis: { engine: "gemini-cli" } })).toThrow();
+  });
+
+  test("engineを変えると通過記録のdigestも変わる", () => {
+    expect(
+      createPolicyDigest(parseConfig({ analysis: { engine: "claude-code" } }))
+    ).not.toBe(createPolicyDigest(parseConfig({})));
+  });
+});

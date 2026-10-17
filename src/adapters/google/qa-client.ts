@@ -73,13 +73,18 @@ export class GoogleSdkContentGenerator implements GoogleContentGenerator {
     request: StructuredOutputRequest<z.ZodType>,
     signal?: AbortSignal
   ): Promise<GoogleGeneratedContent> {
+    // Claude Code が draft 2020-12 の "$schema" 宣言を解決できず失敗したのと同じ
+    // 事態を避けるため、キーワードは残して宣言だけを外す。
+    const { $schema: _declaration, ...responseJsonSchema } = z.toJSONSchema(
+      request.schema
+    );
     const response = await this.#client.models.generateContent({
       model: request.model,
       contents: request.prompt.input,
       config: {
         systemInstruction: request.prompt.instructions,
         responseMimeType: "application/json",
-        responseJsonSchema: z.toJSONSchema(request.schema),
+        responseJsonSchema,
         maxOutputTokens: request.maxOutputTokens,
         httpOptions: { timeout: request.timeoutMs },
         ...(signal === undefined ? {} : { abortSignal: signal })

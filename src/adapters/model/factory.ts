@@ -7,7 +7,10 @@ import type {
   QaSummaryInput,
   QuestionGenerationInput
 } from "../../ports/qa-model.ts";
-import { createOpenAIQaModel } from "../openai/qa-model.ts";
+import {
+  createOpenAIQaModel,
+  createOpenAIStructuredClient
+} from "../openai/qa-model.ts";
 import type { StructuredOutputClient } from "./structured-client.ts";
 import {
   DEFAULT_QA_TIMEOUT_MS,
@@ -20,16 +23,15 @@ export interface CreateQaModelOptions {
   readonly strictness: ReviewStrictness;
 }
 
-// OpenAI は既存の Responses API 経路（createOpenAIQaModel）をそのまま使う。
-type NonOpenAIProvider = Exclude<QaModelProvider, "openai">;
-
 // 各社 SDK は読み込みだけで数十 ms かかり、pre-push フックは push のたびに CLI を
 // 起動する。使う provider の SDK だけを、最初の呼び出し時に読み込む。
-async function loadClient(
-  provider: NonOpenAIProvider,
+export async function loadStructuredOutputClient(
+  provider: QaModelProvider,
   timeoutMs: number
 ): Promise<StructuredOutputClient> {
   switch (provider) {
+    case "openai":
+      return createOpenAIStructuredClient({ timeoutMs });
     case "anthropic": {
       const { createAnthropicStructuredClient } =
         await import("../anthropic/qa-client.ts");
@@ -85,12 +87,16 @@ class LazyQaModel implements QaModel {
 
 export function createQaModel(options: CreateQaModelOptions): QaModel {
   const { selection, strictness } = options;
+  // OpenAI は既存の Responses API 経路（createOpenAIQaModel）をそのまま使う。
   if (selection.provider === "openai") {
     return createOpenAIQaModel({ model: selection.model, strictness });
   }
   const provider = selection.provider;
   return new LazyQaModel(async () => {
-    const client = await loadClient(provider, DEFAULT_QA_TIMEOUT_MS);
+    const client = await loadStructuredOutputClient(
+      provider,
+      DEFAULT_QA_TIMEOUT_MS
+    );
     const resolved = resolveStructuredQaModelOptions({
       model: selection.model,
       strictness

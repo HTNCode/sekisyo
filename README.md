@@ -136,8 +136,42 @@ Anthropic reruns it on a fallback model and bills that run at the fallback
 model's rates.
 
 `provider` is part of the policy digest, so switching providers invalidates
-existing pass records. Diff analysis still runs through the Codex CLI regardless
-of `provider`.
+existing pass records.
+
+### Choosing the diff-analysis engine
+
+`analysis.engine` selects who analyzes the diff before the oral examination. It
+defaults to `codex`, so existing configurations keep working unchanged.
+
+| `analysis.engine` | How it runs                                                                                                                             | `analysis.model`                                          |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `codex`           | Codex CLI on the sanitized snapshot, read-only and ephemeral, ignoring user configuration                                               | `--model` for Codex                                       |
+| `claude-code`     | Claude Code CLI (`claude -p`) on the same snapshot with `--restricted`, only the Read, Grep, and Glob tools, and no session persistence | `--model` for Claude Code                                 |
+| `api`             | Sends only the bounded diff to the oral-examination `provider` with structured output; no repository access                             | model at that provider; defaults to the top-level `model` |
+
+```yaml
+provider: anthropic
+analysis:
+  engine: api
+```
+
+`claude-code` needs Claude Code installed and signed in (a subscription login or
+`ANTHROPIC_API_KEY`). `--restricted` removes the command-running tools, confines
+file access to the snapshot, and ignores user, project, and local settings; a
+run with it did not load `~/.claude/CLAUDE.md`. Besides the sign-in variables,
+only proxy settings (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`) and
+`NODE_EXTRA_CA_CERTS` are forwarded, so it also works behind a proxy.
+
+`api` does not explore the repository, so it is usually quicker and uses fewer
+tokens, but it sees only the diff: callers and other unchanged code are
+invisible to it, so its findings are shallower. Every engine sends code to a
+model service: the CLI engines send the snapshot and diff to their own service
+(OpenAI for Codex, Anthropic for Claude Code), and the oral-examination model
+then receives only the structured analysis. With `api`, the raw diff goes to the
+oral-examination `provider` itself.
+
+`analysis.engine` is part of the policy digest, so switching engines invalidates
+existing pass records.
 
 ## Commands
 
@@ -431,10 +465,14 @@ pass records like any other policy change.
   version, and model.
 - Amend, rebase, reset, or policy changes invalidate the record.
 
-Codex receives repository context. GPT-5.6 receives Codex's structured analysis
-and the author's Q&A, not the raw diff. Authors must still avoid putting
-credentials into answers: accepted answers are intentionally saved until
-`sekisyo pr` publishes the record.
+With the default `codex` engine (and with `claude-code`), the analysis CLI
+receives repository context and the oral-examination model receives only the
+structured analysis and the author's Q&A, not the raw diff. With
+`analysis.engine: api`, the raw diff itself is sent to the configured
+`provider`. The snapshot guarantees above apply to the Claude Code engine as
+well, and only the variables Claude Code needs to sign in are forwarded to it.
+Authors must still avoid putting credentials into answers: accepted answers are
+intentionally saved until `sekisyo pr` publishes the record.
 
 Sekisyo is an accountability aid, not a security boundary. Both local records
 and PR markers are editable, and `--no-verify` remains available by design.

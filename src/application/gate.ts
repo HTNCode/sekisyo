@@ -606,7 +606,7 @@ async function runGateSession(
   let session = created;
   await dependencies.store.save(session);
   const terminal = requireTerminal(dependencies);
-  terminal.write("sekisyo: 差分を分析中... (codex exec)");
+  terminal.write("sekisyo: 差分を分析中...");
   const analysis = await dependencies.analyzer.analyze({
     diff: exactDiff,
     excludedPaths: config.privacy.exclude,
