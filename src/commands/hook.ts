@@ -10,6 +10,10 @@ import { createConsoleTerminal } from "../adapters/terminal/console-terminal.ts"
 import { resolveCommit } from "../adapters/git/git-repository.ts";
 import { configQaModelDescriptor } from "../config/model.ts";
 import { createSessionFingerprint } from "../domain/fingerprint.ts";
+import {
+  coverPushWithCommitRecords,
+  type PushUpdate
+} from "./commit-coverage.ts";
 import type { SessionRecord } from "../domain/session.ts";
 import type { Terminal } from "../ports/terminal.ts";
 import {
@@ -53,6 +57,11 @@ export interface PrePushHookRuntime {
     target: PreparedGateContext["target"],
     options?: RunGateOptions
   ) => Promise<SessionRecord>;
+  /** commit 時の通過記録で push 範囲がまかなえるなら、まとめた記録を返す。 */
+  readonly coverWithCommitRecords?: (
+    context: PreparedGateContext,
+    update: PushUpdate
+  ) => Promise<SessionRecord | undefined>;
 }
 
 const DEFAULT_RUNTIME: PrePushHookRuntime = {
@@ -60,8 +69,13 @@ const DEFAULT_RUNTIME: PrePushHookRuntime = {
   createTerminal: () => createConsoleTerminal(true),
   prepareContext: prepareGateContext,
   resolveCommit,
-  runGate
+  runGate,
+  coverWithCommitRecords: (context, update) =>
+    coverPushWithCommitRecords(context, update, new Date().toISOString())
 };
+
+export const COMMIT_COVERAGE_MESSAGE =
+  "sekisyo: このpushのコミットはすべてcommit時の試問を通過済みのため、push時の試問を省きました。";
 
 export async function runPrePushHook(
   input: PrePushHookInput,
@@ -97,6 +111,11 @@ export async function runPrePushHook(
         existing.diffDigest === prepared.target.diffDigest &&
         (existing.status === "passed" || existing.status === "summarized");
       if (reusable) {
+        continue;
+      }
+      const covered = await runtime.coverWithCommitRecords?.(prepared, update);
+      if (covered !== undefined) {
+        console.error(COMMIT_COVERAGE_MESSAGE);
         continue;
       }
       const currentHead = await runtime.resolveCommit(
