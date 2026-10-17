@@ -112,6 +112,7 @@ describe("Sekisyo CLI のヘルプと版表示", () => {
     try {
       expect(await runCli(["status", "--help"], cwd)).toBe(0);
       expect(await runCli(["status", "-h"], cwd)).toBe(0);
+      expect(await runCli(["uninstall", "--help"], cwd)).toBe(0);
       expect(await runCli(["clean", "--all", "--help"], cwd)).toBe(0);
       expect(await runCli(["pr", "--base", "main", "--help"], cwd)).toBe(0);
     } finally {

@@ -5,7 +5,8 @@ import { basename, join } from "node:path";
 import {
   HOOK_PACKAGE_VERSION,
   installPrePushHook,
-  MANAGED_HOOK_MARKER
+  MANAGED_HOOK_MARKER,
+  uninstallPrePushHook
 } from "../../src/hook/install.ts";
 
 const temporaryDirectories: string[] = [];
@@ -154,5 +155,31 @@ describe("installPrePushHook", () => {
         "pre-push"
       )
     );
+  }, 15_000);
+});
+
+describe("uninstallPrePushHook", () => {
+  test("Sekisyoが設置したフックだけを削除する", async () => {
+    await useGlobalHooksPath();
+    const repo = await createBareRepository();
+    const { hookPath } = await installPrePushHook(repo);
+
+    expect(await uninstallPrePushHook(repo)).toEqual({
+      hookPath,
+      result: "removed"
+    });
+    expect(Bun.file(hookPath).exists()).resolves.toBe(false);
+    expect(await uninstallPrePushHook(repo)).toEqual({
+      hookPath,
+      result: "not_found"
+    });
+
+    const unmanagedHook = "#!/bin/sh\necho keep\n";
+    await writeFile(hookPath, unmanagedHook, "utf8");
+    expect(await uninstallPrePushHook(repo)).toEqual({
+      hookPath,
+      result: "unmanaged"
+    });
+    expect(await readFile(hookPath, "utf8")).toBe(unmanagedHook);
   }, 15_000);
 });

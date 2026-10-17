@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, unlink } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
 import { assertNotTimedOut, runCommand } from "../adapters/git/command.ts";
 import {
@@ -74,6 +74,8 @@ export interface PrePushHookLocation {
    */
   readonly sharedHooksPath?: string;
 }
+
+export type PrePushHookRemoval = "removed" | "not_found" | "unmanaged";
 
 async function readHooksPathSetting(
   repoRoot: string
@@ -164,4 +166,20 @@ export async function installPrePushHook(
     await chmod(hookPath, 0o755);
   }
   return location;
+}
+
+/** Sekisyo が設置したフックだけを消し、利用者自身のフックには触れない。 */
+export async function uninstallPrePushHook(
+  repoRoot: string
+): Promise<{ readonly hookPath: string; readonly result: PrePushHookRemoval }> {
+  const { hookPath } = await resolvePrePushHookLocation(repoRoot);
+  const existingHook = await readExistingHook(hookPath);
+  if (existingHook === undefined) {
+    return { hookPath, result: "not_found" };
+  }
+  if (!isManagedHook(existingHook)) {
+    return { hookPath, result: "unmanaged" };
+  }
+  await unlink(hookPath);
+  return { hookPath, result: "removed" };
 }
