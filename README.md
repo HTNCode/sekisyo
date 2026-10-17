@@ -279,10 +279,12 @@ questions:
 You can create a repository-specific question taxonomy entirely in
 `.sekisyo.yml`; no Sekisyo source changes are required. Set each built-in
 category to `true`, `false`, or `required`, add domain-specific question types
-under `custom` with a unique `name` and concrete `prompt`, and use `paths` to
-strengthen built-in categories for matching files. For example, a frontend team
-can add accessibility guidance, while a billing path can require a failure
-behavior question.
+under `custom` with a unique `name` and concrete `prompt` (a duplicate `name`,
+or one that matches a built-in category such as `boundary`, is rejected when the
+config is loaded; names are compared after trimming surrounding whitespace and
+are case-sensitive), and use `paths` to strengthen built-in categories for
+matching files. For example, a frontend team can add accessibility guidance,
+while a billing path can require a failure behavior question.
 
 A `custom` entry is optional by default. Add `required: true` to it when the
 question must always be asked. Keep `questions.count` at least as large as the
