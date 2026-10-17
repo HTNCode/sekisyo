@@ -32,3 +32,18 @@ describe("policy digest の互換性", () => {
     ).toBe(ANALYSIS_MODEL_DIGEST);
   });
 });
+
+describe("triggers と policy digest", () => {
+  test("commit 時の試問を切り替えても digest は変わらない", () => {
+    expect(
+      createPolicyDigest(parseConfig({ triggers: { commit: true } }))
+    ).toBe(TEMPLATE_DIGEST);
+    expect(
+      createPolicyDigest(parseConfig({ triggers: { commit: false } }))
+    ).toBe(TEMPLATE_DIGEST);
+  });
+
+  test("triggers に未知のキーは書けない", () => {
+    expect(() => parseConfig({ triggers: { merge: true } })).toThrow();
+  });
+});

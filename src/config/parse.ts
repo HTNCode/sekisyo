@@ -40,9 +40,13 @@ export function parseConfig(value: unknown): SekisyoConfig {
   return SekisyoConfigSchema.parse(value);
 }
 
+/**
+ * 試問の内容に効く設定だけから digest を作る。triggers は関所を通す時機だけを
+ * 決めるので、切り替えても既存の通過記録を無効にしない。
+ */
 export function createPolicyDigest(config: SekisyoConfig): string {
-  const normalizedConfig = SekisyoConfigSchema.parse(config);
-  return fingerprint(JSON.stringify(normalizedConfig));
+  const { triggers: _triggers, ...policy } = SekisyoConfigSchema.parse(config);
+  return fingerprint(JSON.stringify(policy));
 }
 
 export async function loadSekisyoConfig(
