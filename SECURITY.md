@@ -28,7 +28,8 @@ environment, never from the committed `.sekisyo.yml`. Configure exclusions for
 sensitive paths. A changed excluded path blocks analysis before its contents are
 read. The Codex and Claude Code analysis engines receive an isolated snapshot
 with Git metadata, symlinks, agent-control files, and excluded paths removed,
-and only the environment variables each needs to sign in. With
+and only an allowlist of environment variables: platform basics plus what each
+needs to sign in (and, for Claude Code, proxy and CA settings). With
 `analysis.engine: api`, the bounded raw diff is sent to the configured provider
 instead. Raw API keys and raw diffs must never be stored in local pass records
 or PR bodies.
