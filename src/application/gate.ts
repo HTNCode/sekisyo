@@ -1,3 +1,4 @@
+import { configQaModelDescriptor } from "../config/model.ts";
 import type { SekisyoConfig } from "../config/schema.ts";
 import type { ReviewFinding } from "../domain/analysis.ts";
 import {
@@ -582,7 +583,7 @@ async function runGateSession(
       base: target.base,
       diffDigest: target.diffDigest,
       head: target.head,
-      model: config.model,
+      model: configQaModelDescriptor(config),
       policyDigest: target.policyDigest,
       promptVersion: PROMPT_VERSION,
       ref: target.ref,

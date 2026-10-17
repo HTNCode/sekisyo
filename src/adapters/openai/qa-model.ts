@@ -1,52 +1,32 @@
 import OpenAI from "openai";
 import type { z } from "zod";
 
-import {
-  buildAnswerJudgmentPrompt,
-  buildQaSummaryPrompt,
-  buildQuestionGenerationPrompt,
-  type ModelPrompt
-} from "../../prompts/index.ts";
+import type { ReviewStrictness } from "../../domain/strictness.ts";
+import type { ModelAdapterError } from "../model/errors.ts";
 import type {
-  AnswerJudgmentInput,
-  QaModel,
-  QaSummaryInput,
-  QuestionGenerationInput
-} from "../../ports/qa-model.ts";
+  StructuredOutputClient,
+  StructuredOutputRequest,
+  StructuredOutputResult
+} from "../model/structured-client.ts";
 import {
-  answerJudgmentWireResponseSchema,
-  answerJudgmentWireSchema,
-  qaSummaryWireSchema,
-  questionListWireSchema,
-  toAnswerJudgment,
-  toQaSummary,
-  toQuestion
-} from "../../schemas/questions.ts";
-import type {
-  AnswerJudgment,
-  QaSummary,
-  Question
-} from "../../domain/questions.ts";
-import { BUILT_IN_QUESTION_CATEGORIES } from "../../domain/questions.ts";
+  DEFAULT_QA_TIMEOUT_MS,
+  resolveStructuredQaModelOptions,
+  StructuredQaModel,
+  type ResolvedStructuredQaModelOptions
+} from "../model/structured-qa-model.ts";
 import {
-  DEFAULT_REVIEW_STRICTNESS,
-  type ReviewStrictness
-} from "../../domain/strictness.ts";
-import { classifyOpenAIError, OpenAIAdapterError } from "./errors.ts";
+  classifyOpenAIError,
+  OpenAIAdapterError,
+  type OpenAIAdapterErrorCode
+} from "./errors.ts";
 import {
   type OpenAIReasoningEffort,
   type OpenAIResponsesClient,
-  OpenAISdkResponsesClient,
-  type StructuredResponse
+  OpenAISdkResponsesClient
 } from "./responses-client.ts";
 
 export const DEFAULT_OPENAI_MODEL = "gpt-5.6-sol";
-export const DEFAULT_OPENAI_TIMEOUT_MS = 60_000;
-
-const DEFAULT_MAX_OUTPUT_TOKENS = 8_000;
-const MAX_QUESTION_COUNT = 20;
-const MAX_ANSWER_JUDGMENT_ATTEMPTS = 2;
-const BUILT_IN_CATEGORY_NAMES = new Set<string>(BUILT_IN_QUESTION_CATEGORIES);
+export const DEFAULT_OPENAI_TIMEOUT_MS = DEFAULT_QA_TIMEOUT_MS;
 
 export interface OpenAIQaModelOptions {
   readonly maxOutputTokens?: number;
@@ -61,207 +41,55 @@ export interface CreateOpenAIQaModelOptions extends OpenAIQaModelOptions {
   readonly maxRetries?: number;
 }
 
-interface ResolvedOpenAIQaModelOptions {
-  readonly maxOutputTokens: number;
-  readonly model: string;
-  readonly reasoningEffort: OpenAIReasoningEffort;
-  readonly strictness: ReviewStrictness;
-  readonly timeoutMs: number;
-}
+/** Responses API の応答を、プロバイダ共通の状態へ揃える。 */
+class OpenAIResponsesStructuredClient implements StructuredOutputClient {
+  readonly #client: OpenAIResponsesClient;
 
-function requirePositiveInteger(value: number): void {
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new OpenAIAdapterError("invalid_input");
+  constructor(client: OpenAIResponsesClient) {
+    this.#client = client;
+  }
+
+  async parse<Schema extends z.ZodType>(
+    request: StructuredOutputRequest<Schema>,
+    signal?: AbortSignal
+  ): Promise<StructuredOutputResult<z.output<Schema>>> {
+    const response = await this.#client.parse(request, signal);
+    return {
+      failed: response.failed,
+      incomplete: response.status === "incomplete",
+      parsed: response.parsed,
+      refused: response.refused
+    };
+  }
+
+  classifyError(error: unknown): ModelAdapterError {
+    return classifyOpenAIError(error);
+  }
+
+  createError(code: OpenAIAdapterErrorCode): ModelAdapterError {
+    return new OpenAIAdapterError(code);
   }
 }
 
 function resolveOptions(
   options: OpenAIQaModelOptions
-): ResolvedOpenAIQaModelOptions {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_OPENAI_TIMEOUT_MS;
-  const maxOutputTokens = options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
-  requirePositiveInteger(timeoutMs);
-  requirePositiveInteger(maxOutputTokens);
-
-  const model = options.model?.trim() ?? DEFAULT_OPENAI_MODEL;
-  if (model.length === 0) {
+): ResolvedStructuredQaModelOptions {
+  const resolved = resolveStructuredQaModelOptions({
+    ...options,
+    model: options.model ?? DEFAULT_OPENAI_MODEL
+  });
+  if (resolved === undefined) {
     throw new OpenAIAdapterError("invalid_input");
   }
-
-  return {
-    maxOutputTokens,
-    model,
-    reasoningEffort: options.reasoningEffort ?? "low",
-    strictness: options.strictness ?? DEFAULT_REVIEW_STRICTNESS,
-    timeoutMs
-  };
+  return resolved;
 }
 
-export class OpenAIQaModel implements QaModel {
-  readonly #client: OpenAIResponsesClient;
-  readonly #options: ResolvedOpenAIQaModelOptions;
-
+export class OpenAIQaModel extends StructuredQaModel {
   constructor(
     client: OpenAIResponsesClient,
     options: OpenAIQaModelOptions = {}
   ) {
-    this.#client = client;
-    this.#options = resolveOptions(options);
-  }
-
-  async #parse<Schema extends z.ZodType>(
-    schema: Schema,
-    schemaName: string,
-    prompt: ModelPrompt,
-    signal?: AbortSignal
-  ): Promise<z.output<Schema>> {
-    let response: StructuredResponse<z.output<Schema>>;
-    try {
-      response = await this.#client.parse(
-        {
-          maxOutputTokens: this.#options.maxOutputTokens,
-          model: this.#options.model,
-          prompt,
-          reasoningEffort: this.#options.reasoningEffort,
-          schema,
-          schemaName,
-          timeoutMs: this.#options.timeoutMs
-        },
-        signal
-      );
-    } catch (error) {
-      throw classifyOpenAIError(error);
-    }
-
-    if (response.status === "incomplete") {
-      throw new OpenAIAdapterError("incomplete");
-    }
-
-    if (response.failed) {
-      throw new OpenAIAdapterError("response_failed");
-    }
-
-    if (response.refused) {
-      throw new OpenAIAdapterError("refusal");
-    }
-
-    if (response.parsed === null) {
-      throw new OpenAIAdapterError("missing_parsed_output");
-    }
-
-    return response.parsed;
-  }
-
-  async generateQuestions(
-    input: QuestionGenerationInput,
-    signal?: AbortSignal
-  ): Promise<readonly Question[]> {
-    const requiredCategoryCount = input.categories.filter(
-      (category) => category.required
-    ).length;
-    if (
-      !Number.isInteger(input.questionCount) ||
-      input.questionCount < 1 ||
-      input.questionCount > MAX_QUESTION_COUNT ||
-      requiredCategoryCount > input.questionCount
-    ) {
-      throw new OpenAIAdapterError("invalid_input");
-    }
-
-    const output = await this.#parse(
-      questionListWireSchema,
-      "sekisyo_questions",
-      buildQuestionGenerationPrompt(input),
-      signal
-    );
-    if (output.questions.length !== input.questionCount) {
-      throw new OpenAIAdapterError("invalid_response");
-    }
-
-    const questions = output.questions.map(toQuestion);
-    if (
-      new Set(questions.map((question) => question.id)).size !==
-      questions.length
-    ) {
-      throw new OpenAIAdapterError("invalid_response");
-    }
-
-    const requestedBuiltIns = new Set(
-      input.categories
-        .filter((category) => BUILT_IN_CATEGORY_NAMES.has(category.name))
-        .map((category) => category.name)
-    );
-    const generatedCategories = new Set(
-      questions.map((question) => question.category)
-    );
-    const generatedCustomCount = questions.filter(
-      (question) => question.category === "custom"
-    ).length;
-    const requiredCustomCount = input.categories.filter(
-      (category) =>
-        category.required && !BUILT_IN_CATEGORY_NAMES.has(category.name)
-    ).length;
-    const includesDisabledBuiltIn = questions.some(
-      (question) =>
-        question.category !== "custom" &&
-        !requestedBuiltIns.has(question.category)
-    );
-    const missesRequiredCategory = input.categories.some(
-      (category) =>
-        category.required &&
-        BUILT_IN_CATEGORY_NAMES.has(category.name) &&
-        !generatedCategories.has(category.name as Question["category"])
-    );
-    if (
-      includesDisabledBuiltIn ||
-      missesRequiredCategory ||
-      generatedCustomCount < requiredCustomCount
-    ) {
-      throw new OpenAIAdapterError("invalid_response");
-    }
-    return questions;
-  }
-
-  async judgeAnswer(
-    input: AnswerJudgmentInput,
-    signal?: AbortSignal
-  ): Promise<AnswerJudgment> {
-    if (input.answer.trim().length === 0) {
-      throw new OpenAIAdapterError("invalid_input");
-    }
-
-    const prompt = buildAnswerJudgmentPrompt(input, this.#options.strictness);
-    for (
-      let attempt = 0;
-      attempt < MAX_ANSWER_JUDGMENT_ATTEMPTS;
-      attempt += 1
-    ) {
-      const output = await this.#parse(
-        answerJudgmentWireResponseSchema,
-        "sekisyo_answer_judgment",
-        prompt,
-        signal
-      );
-      const correlated = answerJudgmentWireSchema.safeParse(output);
-      if (correlated.success) {
-        return toAnswerJudgment(correlated.data);
-      }
-    }
-
-    throw new OpenAIAdapterError("invalid_response");
-  }
-
-  async summarize(
-    input: QaSummaryInput,
-    signal?: AbortSignal
-  ): Promise<QaSummary> {
-    const output = await this.#parse(
-      qaSummaryWireSchema,
-      "sekisyo_qa_summary",
-      buildQaSummaryPrompt(input),
-      signal
-    );
-    return toQaSummary(output);
+    super(new OpenAIResponsesStructuredClient(client), resolveOptions(options));
   }
 }
 

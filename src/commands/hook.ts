@@ -8,6 +8,7 @@ import {
 } from "../application/index.ts";
 import { createConsoleTerminal } from "../adapters/terminal/console-terminal.ts";
 import { resolveCommit } from "../adapters/git/git-repository.ts";
+import { configQaModelDescriptor } from "../config/model.ts";
 import { createSessionFingerprint } from "../domain/fingerprint.ts";
 import type { SessionRecord } from "../domain/session.ts";
 import type { Terminal } from "../ports/terminal.ts";
@@ -84,7 +85,7 @@ export async function runPrePushHook(
         createSessionFingerprint({
           base: prepared.target.base,
           head: prepared.target.head,
-          model: prepared.config.model,
+          model: configQaModelDescriptor(prepared.config),
           policyDigest: prepared.target.policyDigest,
           promptVersion: PROMPT_VERSION,
           ref: prepared.target.ref,

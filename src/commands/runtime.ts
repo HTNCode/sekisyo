@@ -11,7 +11,7 @@ import {
   runGit
 } from "../adapters/git/git-repository.ts";
 import { createPrPublisher } from "../adapters/github/gh-cli.ts";
-import { createOpenAIQaModel } from "../adapters/openai/index.ts";
+import { createQaModel } from "../adapters/model/factory.ts";
 import {
   excludedDiffPaths,
   GateError,
@@ -20,6 +20,8 @@ import {
 import {
   createPolicyDigest,
   loadSekisyoConfig,
+  selectQaModel,
+  type QaModelSelection,
   type SekisyoConfig
 } from "../config/index.ts";
 import type { GateDependencies } from "../application/gate.ts";
@@ -73,7 +75,7 @@ export interface GateDependencyFactories {
     readonly timer: PhaseTimer;
   }) => DiffAnalyzer;
   readonly createModel: (options: {
-    readonly model: string;
+    readonly selection: QaModelSelection;
     readonly strictness: ReviewStrictness;
   }) => QaModel;
 }
@@ -90,7 +92,7 @@ const DEFAULT_CONTEXT_DEPENDENCIES: PrepareGateContextDependencies = {
 
 const DEFAULT_GATE_FACTORIES: GateDependencyFactories = {
   createAnalyzer: createCodexDiffAnalyzer,
-  createModel: createOpenAIQaModel
+  createModel: createQaModel
 };
 
 async function tryGit(
@@ -238,7 +240,7 @@ export function createGateDependencies(
       timer
     }),
     model: factories.createModel({
-      model: context.config.model,
+      selection: selectQaModel(context.config),
       strictness: context.config.strictness
     }),
     store: context.store,

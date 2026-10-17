@@ -38,18 +38,26 @@ export class CommandOutputLimitError extends Error {
   }
 }
 
-// sekisyo が自前で保持するOpenAI関連の環境変数。git も gh も必要としないため子プロセスへ渡さない。
-// OPENAI_BASE_URL はトークン付きプロキシURLが入り得るため含める。
+// sekisyo がQ&Aのモデル呼び出しに使う環境変数。git も gh も必要としないため子プロセスへ渡さない。
+// OPENAI_BASE_URL や互換接続先のURLはトークン付きプロキシURLが入り得るため含める。
 // gh は GH_TOKEN / GITHUB_TOKEN / keyring 系、git は GIT_* / SSH_AUTH_SOCK などを必要とするため、
 // allowlistではなくdenylistで絞る。
-// これはOpenAI関連のみを対象とした最小のdenylistであり、利用者のシェルにある他の秘密
+// これはモデル提供元の資格情報だけを対象とした最小のdenylistであり、利用者のシェルにある他の秘密
 // （AWS_SECRET_ACCESS_KEY や NPM_TOKEN など）は従来どおり git / gh へ渡る。
-const OPENAI_ENVIRONMENT_DENYLIST = new Set([
+// 対応する provider を増やしたら、その資格情報の環境変数もここへ足すこと。
+const MODEL_PROVIDER_ENVIRONMENT_DENYLIST = new Set([
+  "OPENAI_ADMIN_KEY",
   "OPENAI_API_KEY",
   "OPENAI_BASE_URL",
   "OPENAI_ORGANIZATION",
   "OPENAI_ORG_ID",
-  "OPENAI_PROJECT_ID"
+  "OPENAI_PROJECT_ID",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "SEKISYO_OPENAI_COMPATIBLE_API_KEY",
+  "SEKISYO_OPENAI_COMPATIBLE_BASE_URL"
 ]);
 
 export function describeCommandFailure(
@@ -81,10 +89,10 @@ export function assertNotTimedOut(
 }
 
 function isDenied(name: string): boolean {
-  return OPENAI_ENVIRONMENT_DENYLIST.has(name.toUpperCase());
+  return MODEL_PROVIDER_ENVIRONMENT_DENYLIST.has(name.toUpperCase());
 }
 
-function environmentWithoutOpenAiVariables(
+function environmentWithoutModelCredentials(
   overrides: Readonly<Record<string, string | undefined>> = {}
 ): Record<string, string> {
   const environment: Record<string, string> = {};
@@ -121,7 +129,7 @@ export async function runCommand(
 
   const processHandle = Bun.spawn([...command], {
     cwd: options.cwd,
-    env: environmentWithoutOpenAiVariables(options.env),
+    env: environmentWithoutModelCredentials(options.env),
     stdin: options.stdin === undefined ? "ignore" : new Blob([options.stdin]),
     stdout: "pipe",
     stderr: "pipe"
@@ -188,7 +196,7 @@ export async function runCheckedCommandWithStdoutLimit(
 
   const processHandle = Bun.spawn([...command], {
     cwd: options.cwd,
-    env: environmentWithoutOpenAiVariables(options.env),
+    env: environmentWithoutModelCredentials(options.env),
     stdin: options.stdin === undefined ? "ignore" : new Blob([options.stdin]),
     stdout: "pipe",
     stderr: "pipe"
@@ -263,7 +271,7 @@ export async function runInheritedCommand(
 
   const processHandle = Bun.spawn([...command], {
     cwd: options.cwd,
-    env: environmentWithoutOpenAiVariables(options.env),
+    env: environmentWithoutModelCredentials(options.env),
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit"

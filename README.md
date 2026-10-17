@@ -103,6 +103,42 @@ value must be a plain model identifier that your Codex CLI accepts. Both keys
 are part of the policy digest, so changing either invalidates existing pass
 records.
 
+### Choosing the oral-examination provider
+
+The optional top-level `provider` selects who answers the oral examination. It
+defaults to `openai`, so existing configurations keep working unchanged.
+
+| `provider`          | API used                                   | Credentials (environment only)                     | `model` when omitted |
+| ------------------- | ------------------------------------------ | -------------------------------------------------- | -------------------- |
+| `openai`            | OpenAI Responses API, `store: false`       | `OPENAI_API_KEY`                                   | `gpt-5.6-sol`        |
+| `anthropic`         | Anthropic Messages API, structured outputs | `ANTHROPIC_API_KEY` (or the SDK's other sources)   | `claude-opus-5-5`    |
+| `google`            | Gemini API, JSON schema response           | `GEMINI_API_KEY` or `GOOGLE_API_KEY`               | required             |
+| `openai-compatible` | Chat Completions with a JSON schema        | `SEKISYO_OPENAI_COMPATIBLE_BASE_URL`, optional key | required             |
+
+```yaml
+provider: anthropic
+model: claude-opus-5-5
+```
+
+`openai-compatible` covers servers such as Ollama, LM Studio, or OpenRouter. Set
+the endpoint in `SEKISYO_OPENAI_COMPATIBLE_BASE_URL` (for example
+`http://localhost:11434/v1`) and, if the server needs one, the key in
+`SEKISYO_OPENAI_COMPATIBLE_API_KEY`. The server must support JSON-schema
+structured output. Endpoints and keys are read only from the environment, never
+from `.sekisyo.yml`: the file is committed, so a cloned repository could
+otherwise send your key or your answers to an address of its choosing. Sekisyo
+never sends `OPENAI_API_KEY` or the OpenAI organization and project settings to
+an OpenAI-compatible endpoint.
+
+With `provider: anthropic` and a model that supports it, Sekisyo enables
+Anthropic's server-side fallback: if a request is declined for safety reasons,
+Anthropic reruns it on a fallback model and bills that run at the fallback
+model's rates.
+
+`provider` is part of the policy digest, so switching providers invalidates
+existing pass records. Diff analysis still runs through the Codex CLI regardless
+of `provider`.
+
 ## Commands
 
 | Command                 | Purpose                                             |
@@ -195,7 +231,9 @@ either way.
 - a standard `tar` executable available on `PATH`;
 - [Codex CLI](https://developers.openai.com/codex/cli/) installed and
   authenticated;
-- an `OPENAI_API_KEY` available to the Sekisyo process for GPT-5.6;
+- credentials for the oral-examination provider available to the Sekisyo process
+  (`OPENAI_API_KEY` by default; see
+  [Choosing the oral-examination provider](#choosing-the-oral-examination-provider));
 - GitHub CLI (`gh`) authenticated only if you use `sekisyo pr`.
 
 Until the package is published, install Sekisyo from source:
@@ -381,13 +419,15 @@ and PR markers are editable, and `--no-verify` remains available by design.
 commands → application → domain + ports ← adapters
                                       ├─ Git / gh
                                       ├─ Codex CLI
-                                      ├─ OpenAI Responses API
+                                      ├─ OpenAI / Anthropic / Gemini /
+                                      │  OpenAI-compatible model APIs
                                       ├─ filesystem session store
                                       └─ terminal
 ```
 
 External systems are behind ports so the normal test suite uses fakes. Live
-Codex, OpenAI, and GitHub checks are performed separately as manual smoke tests.
+Codex, model-provider, and GitHub checks are performed separately as manual
+smoke tests.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development details and
 [SECURITY.md](SECURITY.md) for reporting security issues. The Japanese

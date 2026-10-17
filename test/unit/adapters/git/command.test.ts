@@ -59,6 +59,28 @@ describe("sanitizedEnvironment", () => {
     expect(JSON.parse(result.stdout)).toEqual({ secret: null, marker: null });
   });
 
+  test.each([
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "GEMINI_API_KEY",
+    "GOOGLE_API_KEY",
+    "OPENAI_ADMIN_KEY",
+    "SEKISYO_OPENAI_COMPATIBLE_API_KEY",
+    "SEKISYO_OPENAI_COMPATIBLE_BASE_URL"
+  ])("他のモデル提供元の資格情報 %s も渡さない", async (name) => {
+    setEnvironment(name, "must-not-leak");
+    const result = await runCommand(
+      [
+        process.execPath,
+        "-e",
+        `console.log(JSON.stringify(process.env.${name} ?? null))`
+      ],
+      { cwd: process.cwd(), timeoutMs: 30_000 }
+    );
+
+    expect(JSON.parse(result.stdout)).toBeNull();
+  });
+
   test("stdout上限付きの経路でも渡さない", async () => {
     setSecret("must-not-leak");
     const result = await runCheckedCommandWithStdoutLimit(
