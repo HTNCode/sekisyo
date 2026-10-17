@@ -283,6 +283,9 @@ export async function runPrCommand(
         ` \`sekisyo ask --base ${baseBranch}\` を実行してください。`
     );
   }
+  if (selectedSession.status === "passed") {
+    console.log("sekisyo: PR用の要約を作成中...");
+  }
   const session = await ensurePublishableSessionSummary(selectedSession, store);
   const rendered = buildPrBlock(session);
   let url: string;
