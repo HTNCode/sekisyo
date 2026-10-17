@@ -2,6 +2,12 @@ import { z } from "zod";
 
 import { BUILT_IN_QUESTION_CATEGORIES } from "../domain/questions.ts";
 import {
+  DEFAULT_MODEL_BY_PROVIDER,
+  DEFAULT_QA_MODEL_PROVIDER,
+  QA_MODEL_PROVIDERS,
+  type QaModelProvider
+} from "../domain/qa-model-provider.ts";
+import {
   DEFAULT_REVIEW_STRICTNESS,
   REVIEW_STRICTNESS_LEVELS
 } from "../domain/strictness.ts";
@@ -126,9 +132,46 @@ const PrivacyConfigSchema = z
   })
   .strict();
 
-export const SekisyoConfigSchema = z
+const OBJECT_INPUT = z.record(z.string(), z.unknown());
+
+/**
+ * provider を OpenAI 以外にして model を省いた設定に、OpenAI の既定モデル名が
+ * 入らないようにする。既定を持たない provider では model の明示を求める。
+ */
+function applyProviderModelDefault(
+  value: unknown,
+  context: z.RefinementCtx
+): unknown {
+  const input = OBJECT_INPUT.safeParse(value);
+  if (!input.success || input.data.model !== undefined) {
+    return value;
+  }
+  const provider = input.data.provider;
+  if (
+    typeof provider !== "string" ||
+    provider === DEFAULT_QA_MODEL_PROVIDER ||
+    !(QA_MODEL_PROVIDERS as readonly string[]).includes(provider)
+  ) {
+    return value;
+  }
+  const defaultModel = DEFAULT_MODEL_BY_PROVIDER[provider as QaModelProvider];
+  if (defaultModel === undefined) {
+    context.addIssue({
+      code: "custom",
+      message: `provider: ${provider} では model を指定してください。`,
+      path: ["model"]
+    });
+    return value;
+  }
+  return { ...input.data, model: defaultModel };
+}
+
+const SekisyoConfigObjectSchema = z
   .object({
     version: z.literal(1).default(1),
+    // provider は省略時 openai。既存の .sekisyo.yml の policy digest を変えないよう
+    // 既定値は持たせず、未指定ならキー自体を出力に含めない。
+    provider: z.enum(QA_MODEL_PROVIDERS).optional(),
     model: safeTextSchema.default("gpt-5.6-sol"),
     strictness: z
       .enum(REVIEW_STRICTNESS_LEVELS)
@@ -162,5 +205,10 @@ export const SekisyoConfigSchema = z
       });
     }
   });
+
+export const SekisyoConfigSchema = z.preprocess(
+  applyProviderModelDefault,
+  SekisyoConfigObjectSchema
+);
 
 export type SekisyoConfig = z.infer<typeof SekisyoConfigSchema>;

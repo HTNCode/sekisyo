@@ -2,6 +2,7 @@ import { EXIT_CODE } from "../application/errors.ts";
 import { PROMPT_VERSION } from "../application/gate.ts";
 import type { SessionRecord } from "../domain/session.ts";
 import type { GateTarget } from "../application/gate.ts";
+import { configQaModelDescriptor } from "../config/model.ts";
 import type { SekisyoConfig } from "../config/schema.ts";
 import { prepareGateContext } from "./runtime.ts";
 
@@ -19,7 +20,7 @@ export function isCurrentSession(
     session.base === target.base &&
     session.diffDigest === currentDiffDigest &&
     session.head === target.head &&
-    session.model === config.model &&
+    session.model === configQaModelDescriptor(config) &&
     session.policyDigest === target.policyDigest &&
     session.promptVersion === PROMPT_VERSION &&
     destinationRef(session.ref) === destinationRef(target.ref) &&

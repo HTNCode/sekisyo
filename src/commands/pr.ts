@@ -1,8 +1,14 @@
 import { createPrPublisher } from "../adapters/github/gh-cli.ts";
-import { createOpenAIQaModel } from "../adapters/openai/index.ts";
+import { createQaModel } from "../adapters/model/factory.ts";
 import { resolveCommit, runGit } from "../adapters/git/git-repository.ts";
 import { ensureSessionSummary, PROMPT_VERSION } from "../application/gate.ts";
-import { createPolicyDigest, loadSekisyoConfig } from "../config/index.ts";
+import {
+  configQaModelDescriptor,
+  createPolicyDigest,
+  loadSekisyoConfig,
+  parseQaModelDescriptor
+} from "../config/index.ts";
+import { DEFAULT_REVIEW_STRICTNESS } from "../domain/strictness.ts";
 import { fingerprint } from "../domain/fingerprint.ts";
 import type { SessionRecord } from "../domain/session.ts";
 import type { GitRepository, QaModel, SessionStore } from "../ports/index.ts";
@@ -149,7 +155,7 @@ async function createPublishableBinding(
     base: state.rootCommit ? "ROOT" : state.base,
     diffDigest: fingerprint(diff),
     head: state.head,
-    model: config.model,
+    model: configQaModelDescriptor(config),
     policyDigest: createPolicyDigest(config),
     promptVersion: PROMPT_VERSION,
     ref: state.ref,
@@ -161,7 +167,10 @@ export async function ensurePublishableSessionSummary(
   session: SessionRecord,
   store: SessionStore,
   createModel: (model: string) => QaModel = (model) =>
-    createOpenAIQaModel({ model })
+    createQaModel({
+      selection: parseQaModelDescriptor(model),
+      strictness: DEFAULT_REVIEW_STRICTNESS
+    })
 ): Promise<SessionRecord> {
   if (session.status === "summarized") {
     return session;
