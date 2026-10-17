@@ -30,7 +30,8 @@ import {
   ClaudeCodeAdapterError,
   ClaudeCodeDriver,
   createClaudeCodeEnvironment,
-  readClaudeCodeStructuredOutput
+  readClaudeCodeStructuredOutput,
+  toClaudeCodeJsonSchema
 } from "../../src/adapters/claude-code/diff-analyzer.ts";
 import { CliDiffAnalyzer } from "../../src/adapters/codex/diff-analyzer.ts";
 
@@ -1356,6 +1357,9 @@ describe("ClaudeCodeDriver", () => {
         spec.argv.indexOf("--model") + 2
       )
     ).toEqual(["--model", "sonnet"]);
+    const schemaArgument =
+      spec?.argv[(spec.argv.indexOf("--json-schema") ?? -2) + 1] ?? "";
+    expect(JSON.parse(schemaArgument)).not.toHaveProperty("$schema");
     expect(runner.snapshot?.gitDirectoryExists).toBe(false);
     expect(analysis.summary.length).toBeGreaterThan(0);
   });
@@ -1388,6 +1392,31 @@ describe("ClaudeCodeDriver", () => {
     expect(() => readClaudeCodeStructuredOutput(stdout)).toThrow(
       expect.objectContaining({ code })
     );
+  });
+
+  test("--json-schemaにはdraft宣言を外したスキーマを渡す", () => {
+    const schema = JSON.stringify({
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      type: "object",
+      properties: { ok: { type: "boolean" } }
+    });
+    expect(JSON.parse(toClaudeCodeJsonSchema(schema))).toEqual({
+      type: "object",
+      properties: { ok: { type: "boolean" } }
+    });
+  });
+
+  test("プロキシ設定と社内CAは渡す", () => {
+    const environment = createClaudeCodeEnvironment({
+      HTTPS_PROXY: "http://proxy:3128",
+      NODE_EXTRA_CA_CERTS: "/etc/ca.pem",
+      no_proxy: "localhost"
+    });
+    expect(environment).toEqual({
+      HTTPS_PROXY: "http://proxy:3128",
+      NODE_EXTRA_CA_CERTS: "/etc/ca.pem",
+      no_proxy: "localhost"
+    });
   });
 
   test("OpenAIやGeminiの資格情報は渡さず、Claude Codeの認証に要るものだけ渡す", () => {

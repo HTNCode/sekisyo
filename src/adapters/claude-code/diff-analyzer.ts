@@ -21,15 +21,34 @@ import { NodeCodexTemporaryWorkspaceFactory } from "../codex/temporary-workspace
 export const CLAUDE_CODE_ANALYSIS_PHASE = "claude-code-analysis";
 const CLAUDE_CODE_EXECUTABLE = "claude";
 
-// Claude Code の認証に要るものだけを足す。OpenAI や Gemini のキーは渡さない。
+// Claude Code が API へ到達し認証するのに要るものだけを足す。OpenAI や Gemini の
+// キーは渡さない。プロキシ経由でしか外へ出られない環境では、プロキシ設定と社内 CA
+// が無いと名前解決の段階で失敗する（サンドボックス内で ENOTFOUND を実測）。
 const CLAUDE_CODE_ENVIRONMENT_ALLOWLIST: ReadonlySet<string> = new Set([
   ...PLATFORM_ENVIRONMENT_NAMES,
+  "ALL_PROXY",
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
   "CLAUDE_CONFIG_DIR",
+  "HTTPS_PROXY",
+  "HTTP_PROXY",
   "LOGNAME",
+  "NODE_EXTRA_CA_CERTS",
+  "NO_PROXY",
   "USER"
 ]);
+
+/**
+ * Claude Code の --json-schema は draft 2020-12 の "$schema" を解決できず起動時に
+ * 失敗する（実測）。キーワード自体は互換なので、宣言だけを外して渡す。
+ */
+export function toClaudeCodeJsonSchema(schemaJson: string): string {
+  const parsed = z
+    .record(z.string(), z.unknown())
+    .parse(JSON.parse(schemaJson));
+  const { $schema: _declaration, ...schema } = parsed;
+  return JSON.stringify(schema);
+}
 
 // `claude -p --output-format json` の結果。--json-schema を付けると、検証済みの
 // 出力が structured_output に入る（2026-10-18 に実測）。
@@ -120,7 +139,7 @@ export class ClaudeCodeDriver implements AnalysisCliDriver {
       "--output-format",
       "json",
       "--json-schema",
-      schemaJson,
+      toClaudeCodeJsonSchema(schemaJson),
       ...(this.#model === undefined ? [] : ["--model", this.#model]),
       prompt
     ];
