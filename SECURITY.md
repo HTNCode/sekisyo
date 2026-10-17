@@ -53,5 +53,5 @@ secret scanner. In particular, the generic `name = value` check only treats a
 value as a credential when it is entirely ASCII or contains a run of at least
 eight printable ASCII characters, so a short value or a space-separated
 passphrase mixed with non-ASCII prose can slip through. Do not put credentials
-into oral-examination answers because accepted answers are temporarily stored
-locally before publication.
+into oral-examination answers because accepted answers are stored locally, and
+are kept there after publication until `sekisyo clean --all`.

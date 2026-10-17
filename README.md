@@ -64,9 +64,40 @@ has been selected, `sekisyo pr` asks GPT-5.6 to turn it into:
 - the author's Q&A.
 
 The generated summary is first saved as a summarized local record. Sekisyo then
-creates or updates the PR body and deletes the local record only after that
-write succeeds. An already summarized record is reused on retry without another
-summary call. Only the PR body is permanent; local records are disposable.
+creates or updates the PR body and, only after that write succeeds, marks the
+local record as published. An already summarized record is reused on retry
+without another summary call. The PR body is the permanent record; a published
+local record holds the same content and is kept only so that a later push can
+tell which commits were already examined (see
+[Examining at commit time](#examining-at-commit-time-optional)). Remove local
+records at any time with `sekisyo clean --all`.
+
+## Examining at commit time (optional)
+
+The gate always runs at push. To also examine each commit as you make it, turn
+it on in `.sekisyo.yml` and run `sekisyo init` again so the `pre-commit` hook is
+installed:
+
+```yaml
+triggers:
+  commit: true
+```
+
+- The examination covers only the staged changes. The analysis engine sees the
+  files exactly as they will be committed.
+- It runs only when a person commits from an interactive terminal. Commits made
+  by an agent (such as Claude Code), an IDE, or a script have no terminal, so
+  they pass with a notice and are examined at push instead.
+- At push, if every commit being pushed was examined at commit time, the push
+  examination is skipped. Sekisyo combines those records into one pass record
+  for the push, so `sekisyo pr` works as usual. Commits already on the remote
+  count as covered when the push that put them there passed.
+- A commit is matched by its parent and its tree, not by diff text. Anything
+  that changes either one sends the push back to a full examination: rebase,
+  cherry-pick, `--amend`, a merge commit, or a commit made without the
+  examination (an agent's commit, the first commit, or `--no-verify`).
+- `triggers` is not part of the policy digest, so turning it on or off keeps
+  existing pass records valid. `sekisyo uninstall` removes both hooks.
 
 ## How Sekisyo uses Codex and GPT-5.6
 
@@ -83,8 +114,9 @@ risks?”** This separation keeps the product focused on developing the author:
 neither model is used to detect whether code or an answer was written by AI.
 
 GPT-5.6 calls use strict structured outputs and `store: false`. The local pass
-record remains under Git's private directory until `sekisyo pr` successfully
-transfers the explanation record to the pull request body.
+record stays under Git's private directory; after `sekisyo pr` transfers the
+explanation record to the pull request body, it is kept there as published until
+`sekisyo clean --all`.
 
 Each side takes its model from its own key in `.sekisyo.yml`. The top-level
 `model` selects the OpenAI model used for the oral examination, and
@@ -178,7 +210,7 @@ existing pass records.
 | Command                 | Purpose                                             |
 | ----------------------- | --------------------------------------------------- |
 | `sekisyo init`          | Install the pre-push hook and create `.sekisyo.yml` |
-| `sekisyo uninstall`     | Remove the Sekisyo pre-push hook from this repo     |
+| `sekisyo uninstall`     | Remove the Sekisyo hooks from this repo             |
 | `sekisyo ask`           | Run the self-review and oral examination early      |
 | `sekisyo status`        | Show the current commit's gate state                |
 | `sekisyo pr`            | Create or update a PR with the Sekisyo record       |
@@ -312,7 +344,9 @@ if [ -x "$hook" ]; then exec "$hook" "$@"; fi
 
 If the shared hook reads standard input first, save it and pass the same content
 to the repository hook. A `core.hooksPath` set in the repository's own
-configuration (such as husky's `.husky`) is used as before.
+configuration (such as husky's `.husky`) is used as before. With
+`triggers.commit: true`, the same applies to `pre-commit`: the shared
+`pre-commit` must hand over to `hooks/pre-commit` in the same way.
 
 ## Supported platforms
 
@@ -472,7 +506,8 @@ structured analysis and the author's Q&A, not the raw diff. With
 `provider`. The snapshot guarantees above apply to the Claude Code engine as
 well, and only the variables Claude Code needs to sign in are forwarded to it.
 Authors must still avoid putting credentials into answers: accepted answers are
-intentionally saved until `sekisyo pr` publishes the record.
+intentionally saved locally, and stay there after `sekisyo pr` publishes them
+until `sekisyo clean --all`.
 
 Sekisyo is an accountability aid, not a security boundary. Both local records
 and PR markers are editable, and `--no-verify` remains available by design.
