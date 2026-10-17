@@ -377,6 +377,16 @@ describe("runGate", () => {
         message.includes("適用範囲・仕様が具体的ではありません")
       )
     ).toBe(true);
+    // モデルを待つ間も止まって見えないよう、待ちに入る前に進捗を出す
+    const progress = terminal.messages.filter((message) =>
+      message.includes("sekisyo: ")
+    );
+    expect(
+      progress.filter((message) => message.includes("回答を判定中..."))
+    ).toHaveLength(3); // 指摘理由の判定1回 + 口頭試問の判定2回
+    expect(
+      progress.some((message) => message.includes("口頭試問の質問を準備中..."))
+    ).toBe(true);
   });
 
   test("timerを渡すと質問生成と回答判定をフェーズとして計測する", async () => {

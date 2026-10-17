@@ -65,10 +65,19 @@ function phaseTimer(dependencies: Pick<GateDependencies, "timer">): PhaseTimer {
   return dependencies.timer ?? noopPhaseTimer();
 }
 
+/**
+ * モデルの応答を待つ間に何も出さないと、回答の送信後に止まったように見える。
+ * 待ちに入る直前に、何を待っているかを1行出す。
+ */
+function writeProgress(terminal: Terminal | undefined, message: string): void {
+  terminal?.write(muted(`sekisyo: ${message}`, terminal.colorTarget));
+}
+
 function judgeAnswer(
-  dependencies: Pick<GateDependencies, "model" | "timer">,
+  dependencies: Pick<GateDependencies, "model" | "terminal" | "timer">,
   input: Parameters<QaModel["judgeAnswer"]>[0]
 ): Promise<AnswerJudgment> {
+  writeProgress(dependencies.terminal, "回答を判定中...");
   return phaseTimer(dependencies).measure(ANSWER_JUDGMENT_PHASE, () =>
     dependencies.model.judgeAnswer(input)
   );
@@ -651,6 +660,7 @@ async function runGateSession(
     // indefinitely when a model adapter ignores AbortSignal.
     throw error;
   }
+  writeProgress(dependencies.terminal, "口頭試問の質問を準備中...");
   const questionGenerationResult = await questionGeneration;
   if (questionGenerationResult.status === "rejected") {
     throw questionGenerationResult.error;

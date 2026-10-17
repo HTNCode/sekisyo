@@ -2,10 +2,11 @@ import { EXIT_CODE } from "../application/errors.ts";
 import { findRepositoryRoot } from "../adapters/git/git-repository.ts";
 import { createConsoleTerminal } from "../adapters/terminal/console-terminal.ts";
 import {
+  loadSekisyoConfig,
   SEKISYO_CONFIG_FILE,
   SEKISYO_CONFIG_TEMPLATE
 } from "../config/parse.ts";
-import { installPrePushHook } from "../hook/install.ts";
+import { installManagedHook, type ManagedHookName } from "../hook/install.ts";
 import { TerminalInputClosedError } from "../ports/terminal.ts";
 
 function aliasInstructions(): string {
@@ -34,14 +35,19 @@ function aliasInstructions(): string {
   ].join("\n");
 }
 
-function sharedHooksPathNotice(sharedHooksPath: string): string {
+function sharedHooksPathNotice(
+  sharedHooksPath: string,
+  hookNames: readonly ManagedHookName[]
+): string {
   return [
     `注意: リポジトリ外の設定で core.hooksPath=${sharedHooksPath} が有効です。`,
     "Sekisyo のフックはこのリポジトリだけに設置しましたが、Git はこのフックを直接呼びません。",
-    `${sharedHooksPath}/pre-push の末尾で、リポジトリ側のフックへ処理を渡してください。`,
-    "共有フックが標準入力を読む場合は、読む前に退避し、同じ内容を渡し直してください。",
-    '  hook="$(git rev-parse --git-common-dir)/hooks/pre-push"',
-    '  if [ -x "$hook" ]; then exec "$hook" "$@"; fi'
+    ...hookNames.flatMap((name) => [
+      `${sharedHooksPath}/${name} の末尾で、リポジトリ側のフックへ処理を渡してください。`,
+      `  hook="$(git rev-parse --git-common-dir)/hooks/${name}"`,
+      '  if [ -x "$hook" ]; then exec "$hook" "$@"; fi'
+    ]),
+    "共有フックが標準入力を読む場合は、読む前に退避し、同じ内容を渡し直してください。"
   ].join("\n");
 }
 
@@ -94,10 +100,20 @@ export async function runInitCommand(
   } else {
     console.log(`保持: ${configPath}（既存設定は上書きしません）`);
   }
-  const { hookPath, sharedHooksPath } = await installPrePushHook(repoRoot);
-  console.log(`pre-pushフック: ${hookPath}`);
+  // commit 時の試問は設定で有効にしたときだけ pre-commit フックを置く。
+  const config = await loadSekisyoConfig(repoRoot);
+  const hookNames: readonly ManagedHookName[] =
+    config.triggers?.commit === true
+      ? ["pre-push", "pre-commit"]
+      : ["pre-push"];
+  let sharedHooksPath: string | undefined;
+  for (const name of hookNames) {
+    const location = await installManagedHook(repoRoot, name);
+    console.log(`${name}フック: ${location.hookPath}`);
+    sharedHooksPath ??= location.sharedHooksPath;
+  }
   if (sharedHooksPath !== undefined) {
-    console.log(sharedHooksPathNotice(sharedHooksPath));
+    console.log(sharedHooksPathNotice(sharedHooksPath, hookNames));
   }
 
   let showAlias = options.showAlias === true;

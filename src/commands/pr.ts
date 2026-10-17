@@ -10,7 +10,7 @@ import {
 } from "../config/index.ts";
 import { DEFAULT_REVIEW_STRICTNESS } from "../domain/strictness.ts";
 import { fingerprint } from "../domain/fingerprint.ts";
-import type { SessionRecord } from "../domain/session.ts";
+import { transitionSession, type SessionRecord } from "../domain/session.ts";
 import type { GitRepository, QaModel, SessionStore } from "../ports/index.ts";
 import { renderSekisyoPrBlock, upsertSekisyoBlock } from "../pr/marker.ts";
 import { createSessionStore } from "./runtime.ts";
@@ -76,7 +76,7 @@ interface PublishableSessionBinding {
   readonly remote: string;
 }
 
-function destinationRef(ref: string): string {
+export function destinationRef(ref: string): string {
   return ref.replace(/@(?:[0-9a-f]{40}|[0-9a-f]{64})$/iu, "");
 }
 
@@ -283,6 +283,9 @@ export async function runPrCommand(
         ` \`sekisyo ask --base ${baseBranch}\` を実行してください。`
     );
   }
+  if (selectedSession.status === "passed") {
+    console.log("sekisyo: PR用の要約を作成中...");
+  }
   const session = await ensurePublishableSessionSummary(selectedSession, store);
   const rendered = buildPrBlock(session);
   let url: string;
@@ -302,8 +305,15 @@ export async function runPrCommand(
     url = current.url;
   }
 
-  await store.remove(session.fingerprint);
+  // 消さずに公開済みとして残す。commit 時の試問を有効にしている場合、次の push で
+  // remote にあるコミットが通過済みだったことの根拠に使う。内容は PR 本文に載せた
+  // ものと同じで、`sekisyo clean --all` で消せる。
+  await store.save(
+    transitionSession(session, "published", new Date().toISOString())
+  );
   console.log(`PRへSekisyo記録を書き出しました: ${url}`);
-  console.log("役目を終えたローカルの通行手形を削除しました。");
+  console.log(
+    "ローカルの通行手形は公開済みとして残しました。不要なら `sekisyo clean --all` で消せます。"
+  );
   return 0;
 }

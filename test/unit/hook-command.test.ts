@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { PassThrough, Readable, Writable } from "node:stream";
 
 import type {
@@ -8,7 +8,10 @@ import type {
 import { PROMPT_VERSION, runGate } from "../../src/application/gate.ts";
 import { ConsoleTerminal } from "../../src/adapters/terminal/console-terminal.ts";
 import { DEFAULT_CONFIG, createPolicyDigest } from "../../src/config/index.ts";
-import { runPrePushHook } from "../../src/commands/hook.ts";
+import {
+  COMMIT_COVERAGE_MESSAGE,
+  runPrePushHook
+} from "../../src/commands/hook.ts";
 import {
   createGateDependencies,
   type PreparedGateContext
@@ -210,6 +213,54 @@ async function expectHookAborts(terminal: ConsoleTerminal): Promise<void> {
 }
 
 describe("runPrePushHook", () => {
+  test("commit時の通過記録でまかなえるpushは、端末も試問も使わずに通す", async () => {
+    const gateTarget = target();
+    const prepared = context(new MemorySessionStore(null));
+    let terminalFactoryCalls = 0;
+    let gateCalls = 0;
+    const coveredUpdates: string[] = [];
+    const stderr = spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      const result = await runPrePushHook(
+        {
+          cwd: "C:\\repo",
+          remote: "origin",
+          stdin: `refs/heads/feature ${HEAD_OID} refs/heads/feature ${ZERO_OID}\n`
+        },
+        {
+          createDependencies: (gateContext, terminal) =>
+            createGateDependencies(gateContext, terminal, {
+              createAnalyzer: () => analyzer,
+              createModel: () => model
+            }),
+          createTerminal: () => {
+            terminalFactoryCalls += 1;
+            return new FakeTerminal();
+          },
+          prepareContext: async () => prepared,
+          resolveCommit: async () => HEAD_OID,
+          runGate: async () => {
+            gateCalls += 1;
+            return passedSession(gateTarget);
+          },
+          coverWithCommitRecords: async (_context, update) => {
+            coveredUpdates.push(update.localOid);
+            return passedSession(gateTarget);
+          }
+        }
+      );
+
+      expect(result).toBe(0);
+      expect(coveredUpdates).toEqual([HEAD_OID]);
+      expect(terminalFactoryCalls).toBe(0);
+      expect(gateCalls).toBe(0);
+      expect(stderr).toHaveBeenCalledWith(COMMIT_COVERAGE_MESSAGE);
+    } finally {
+      stderr.mockRestore();
+    }
+  });
+
   test("cache hitではanalyzer/model factoryと端末を生成しない", async () => {
     const gateTarget = target();
     const store = new MemorySessionStore(passedSession(gateTarget));

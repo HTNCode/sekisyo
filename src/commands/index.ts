@@ -1,5 +1,6 @@
 export * from "./ask.ts";
 export * from "./clean.ts";
+export * from "./commit-hook.ts";
 export * from "./hook.ts";
 export * from "./init.ts";
 export * from "./pr.ts";

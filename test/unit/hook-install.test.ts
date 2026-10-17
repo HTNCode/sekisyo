@@ -6,6 +6,8 @@ import {
   HOOK_PACKAGE_VERSION,
   installPrePushHook,
   MANAGED_HOOK_MARKER,
+  renderManagedHook,
+  renderPrePushHook,
   uninstallPrePushHook
 } from "../../src/hook/install.ts";
 
@@ -182,4 +184,20 @@ describe("uninstallPrePushHook", () => {
     });
     expect(await readFile(hookPath, "utf8")).toBe(unmanagedHook);
   }, 15_000);
+});
+
+describe("renderManagedHook", () => {
+  test("pre-pushは従来どおり、sekisyoが無ければbunxで起動し、それも無ければ止める", () => {
+    expect(renderManagedHook("pre-push")).toBe(renderPrePushHook());
+    expect(renderPrePushHook()).toContain("bunx --bun sekisyo@");
+    expect(renderPrePushHook()).toMatch(/exit 1\n$/u);
+  });
+
+  test("pre-commitはsekisyoを起動できなくてもcommitを止めない", () => {
+    const hook = renderManagedHook("pre-commit");
+    expect(hook).toContain("exec sekisyo hook pre-commit");
+    expect(hook).not.toContain("bunx");
+    expect(hook).toMatch(/exit 0\n$/u);
+    expect(hook).toContain("SEKISYO_PRE_COMMIT_ACTIVE");
+  });
 });

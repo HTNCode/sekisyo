@@ -1,7 +1,7 @@
 import { createReadStream, createWriteStream, openSync } from "node:fs";
 import { createInterface } from "node:readline/promises";
 import type { Readable, Writable } from "node:stream";
-import { isatty } from "node:tty";
+import { isatty, ReadStream } from "node:tty";
 import {
   TerminalInputClosedError,
   type ColorTarget,
@@ -139,6 +139,41 @@ export class ConsoleTerminal implements Terminal {
   }
 }
 
+/**
+ * /dev/tty を TTY ストリームとして開き、readline に raw モードで読ませる。
+ *
+ * 通常のファイルとして開くと OS の行編集（canonical モード）がそのまま働き、
+ * macOS では1行 1024 バイト（日本語で約340文字）を超えた入力が捨てられる。
+ * 上限に達すると Enter も受け付けず、試問が止まったように見える。raw モードなら
+ * 入力は readline が1文字ずつ受け取るため、この上限に当たらない。
+ */
+function openPosixTerminal(
+  inputFd: number,
+  outputPath: string,
+  outputFd: number
+): ConsoleTerminal | undefined {
+  if (!isatty(inputFd) || !isatty(outputFd)) {
+    return undefined;
+  }
+  try {
+    const input = new ReadStream(inputFd);
+    if (typeof input.setRawMode !== "function") {
+      input.destroy();
+      return undefined;
+    }
+    // raw モードが要るのは入力側だけ。出力は従来どおりファイルストリームで書く。
+    // Bun では /dev/tty の fd から tty.WriteStream を作ると EINVAL (kqueue) で
+    // 失敗することを macOS で実測した。
+    const output = createWriteStream(outputPath, {
+      autoClose: true,
+      fd: outputFd
+    });
+    return new ConsoleTerminal(input, output, true, true);
+  } catch {
+    return undefined;
+  }
+}
+
 function openControllingTerminal(): ConsoleTerminal | undefined {
   const inputPath = process.platform === "win32" ? "CONIN$" : "/dev/tty";
   const outputPath = process.platform === "win32" ? "CONOUT$" : "/dev/tty";
@@ -146,6 +181,12 @@ function openControllingTerminal(): ConsoleTerminal | undefined {
   try {
     const inputFd = openSync(inputPath, "r");
     const outputFd = openSync(outputPath, "w");
+    if (process.platform !== "win32") {
+      const terminal = openPosixTerminal(inputFd, outputPath, outputFd);
+      if (terminal !== undefined) {
+        return terminal;
+      }
+    }
     const input = createReadStream(inputPath, {
       autoClose: true,
       fd: inputFd

@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInitCommand, type InitRuntime } from "../../src/commands/init.ts";
+import { runUninstallCommand } from "../../src/commands/uninstall.ts";
 import { SEKISYO_CONFIG_TEMPLATE } from "../../src/config/parse.ts";
 import { TerminalInputClosedError } from "../../src/ports/terminal.ts";
 
@@ -194,5 +195,43 @@ describe("runInitCommand", () => {
     ).resolves.toBe(0);
 
     expect(await Bun.file(configPath).text()).toBe(edited);
+  });
+
+  test("commit時の試問を有効にしていればpre-commitフックも置き、uninstallで両方外す", async () => {
+    const repo = await createRepository();
+    await Bun.write(
+      join(repo, ".sekisyo.yml"),
+      `${SEKISYO_CONFIG_TEMPLATE}triggers:\n  commit: true\n`
+    );
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await expect(
+        runInitCommand(repo, { noAlias: true }, runtimeFor(undefined))
+      ).resolves.toBe(0);
+      const hooks = join(repo, ".git", "hooks");
+      expect(await Bun.file(join(hooks, "pre-push")).exists()).toBeTrue();
+      expect(await Bun.file(join(hooks, "pre-commit")).text()).toContain(
+        "hook pre-commit"
+      );
+
+      await expect(runUninstallCommand(repo)).resolves.toBe(0);
+      expect(await Bun.file(join(hooks, "pre-push")).exists()).toBeFalse();
+      expect(await Bun.file(join(hooks, "pre-commit")).exists()).toBeFalse();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("commit時の試問が無効ならpre-commitフックは置かない", async () => {
+    const repo = await createRepository();
+    const log = spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await runInitCommand(repo, { noAlias: true }, runtimeFor(undefined));
+    } finally {
+      log.mockRestore();
+    }
+    expect(
+      await Bun.file(join(repo, ".git", "hooks", "pre-commit")).exists()
+    ).toBeFalse();
   });
 });

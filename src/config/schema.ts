@@ -129,6 +129,14 @@ const AnalysisConfigSchema = z
   })
   .strict();
 
+// いつ関所を通すか。push 時は常に通し、commit 時は任意で追加する。試問の内容は
+// 変えないため policy digest には含めない（createPolicyDigest で除外する）。
+const TriggersConfigSchema = z
+  .object({
+    commit: z.boolean().optional()
+  })
+  .strict();
+
 const PrivacyConfigSchema = z
   .object({
     exclude: z
@@ -194,6 +202,7 @@ const SekisyoConfigObjectSchema = z
       maxDiffBytes: 1_000_000,
       timeoutSeconds: 180
     }),
+    triggers: TriggersConfigSchema.optional(),
     privacy: PrivacyConfigSchema.default({
       exclude: ["**/.env*", "**/secrets/**", "**/*.pem", "**/*.key"]
     })
