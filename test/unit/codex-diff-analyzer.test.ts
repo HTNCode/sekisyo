@@ -26,6 +26,13 @@ import type {
   ProcessSpec
 } from "../../src/ports/process-runner.ts";
 import { createPhaseTimer } from "../../src/observability/timing.ts";
+import {
+  ClaudeCodeAdapterError,
+  ClaudeCodeDriver,
+  createClaudeCodeEnvironment,
+  readClaudeCodeStructuredOutput
+} from "../../src/adapters/claude-code/diff-analyzer.ts";
+import { CliDiffAnalyzer } from "../../src/adapters/codex/diff-analyzer.ts";
 
 const BASE_OID = "1".repeat(40);
 const HEAD_OID = "2".repeat(40);
@@ -1289,5 +1296,111 @@ describe("createCodexEnvironment", () => {
     });
 
     expect(environment).toEqual({ PATH: "C:\\bin" });
+  });
+});
+
+function claudeCodeResult(fields: Record<string, unknown>): string {
+  return JSON.stringify({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: "",
+    ...fields
+  });
+}
+
+describe("ClaudeCodeDriver", () => {
+  function createClaudeAnalyzer(stdout: string): {
+    readonly analyzer: CliDiffAnalyzer;
+    readonly runner: FakeProcessRunner;
+  } {
+    const runner = new FakeProcessRunner({ stdout }, seedMinimalRepository);
+    return {
+      analyzer: new CliDiffAnalyzer(
+        new ClaudeCodeDriver({ model: "sonnet" }),
+        runner,
+        new FakeWorkspaceFactory("unused"),
+        {}
+      ),
+      runner
+    };
+  }
+
+  test("読み取り専用・使い捨て・設定無視の引数でスナップショット上から呼ぶ", async () => {
+    const { analyzer, runner } = createClaudeAnalyzer(
+      claudeCodeResult({ structured_output: JSON.parse(validOutput) })
+    );
+
+    const analysis = await analyzer.analyze(validInput());
+
+    const spec = runner.specs.at(-1);
+    expect(spec?.argv[0]).toBe("claude");
+    for (const flag of [
+      "-p",
+      "--restricted",
+      "--strict-mcp-config",
+      "--disable-slash-commands",
+      "--no-session-persistence"
+    ]) {
+      expect(spec?.argv).toContain(flag);
+    }
+    expect(
+      spec?.argv.slice(
+        spec.argv.indexOf("--tools"),
+        spec.argv.indexOf("--tools") + 2
+      )
+    ).toEqual(["--tools", "Read,Grep,Glob"]);
+    expect(
+      spec?.argv.slice(
+        spec.argv.indexOf("--model"),
+        spec.argv.indexOf("--model") + 2
+      )
+    ).toEqual(["--model", "sonnet"]);
+    expect(runner.snapshot?.gitDirectoryExists).toBe(false);
+    expect(analysis.summary.length).toBeGreaterThan(0);
+  });
+
+  test("共通処理の失敗もClaude Code名義で報告する", async () => {
+    const runner = new FakeProcessRunner(
+      { exitCode: 1, stdout: "" },
+      seedMinimalRepository
+    );
+    const analyzer = new CliDiffAnalyzer(
+      new ClaudeCodeDriver({}),
+      runner,
+      new FakeWorkspaceFactory("unused"),
+      {}
+    );
+
+    const error = await analyzer
+      .analyze(validInput())
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ClaudeCodeAdapterError);
+    expect(error).toMatchObject({ code: "non_zero_exit", exitCode: 1 });
+  });
+
+  test.each([
+    ["not json", "invalid_event_stream"],
+    [claudeCodeResult({ is_error: true }), "failed_event"],
+    [claudeCodeResult({ subtype: "error_max_turns" }), "failed_event"],
+    [claudeCodeResult({}), "missing_output"]
+  ])("結果の異常を分類する", (stdout, code) => {
+    expect(() => readClaudeCodeStructuredOutput(stdout)).toThrow(
+      expect.objectContaining({ code })
+    );
+  });
+
+  test("OpenAIやGeminiの資格情報は渡さず、Claude Codeの認証に要るものだけ渡す", () => {
+    const environment = createClaudeCodeEnvironment({
+      ANTHROPIC_API_KEY: "anthropic",
+      GEMINI_API_KEY: "gemini",
+      HOME: "/home/user",
+      OPENAI_API_KEY: "openai",
+      SEKISYO_OPENAI_COMPATIBLE_API_KEY: "compatible"
+    });
+    expect(environment).toEqual({
+      ANTHROPIC_API_KEY: "anthropic",
+      HOME: "/home/user"
+    });
   });
 });
