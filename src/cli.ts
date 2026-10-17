@@ -4,7 +4,8 @@ import {
   runInitCommand,
   runPrePushHook,
   runPrCommand,
-  runStatusCommand
+  runStatusCommand,
+  runUninstallCommand
 } from "./commands/index.ts";
 import { EXIT_CODE } from "./application/errors.ts";
 import { SEKISYO_VERSION } from "./version.ts";
@@ -13,6 +14,7 @@ const HELP = `Sekisyo CLI — AI生成コードを説明責任つきでレビュ
 
 使い方:
   sekisyo init [--show-alias | --no-alias]
+  sekisyo uninstall
   sekisyo ask [--base <ref>] [--force]
   sekisyo status
   sekisyo pr [--base <branch>] [--title <title>]
@@ -20,7 +22,7 @@ const HELP = `Sekisyo CLI — AI生成コードを説明責任つきでレビュ
   sekisyo git <git args...>
   sekisyo <unknown git command...>
 
-init / ask / status / pr / clean では --help / --version を任意の位置で
+init / uninstall / ask / status / pr / clean では --help / --version を任意の位置で
 受け付けます。内部用の hook は対象外です。
 
 pre-pushフック内部:
@@ -168,6 +170,14 @@ export async function runCli(
         throw new Error("--show-alias と --no-alias は同時に指定できません。");
       }
       return runInitCommand(cwd, { noAlias, showAlias });
+    }
+    case "uninstall": {
+      const options = parseCommandOptions(rest, new Set(), new Set());
+      const early = helpOrVersionExit(options.flags);
+      if (early !== undefined) {
+        return early;
+      }
+      return runUninstallCommand(cwd);
     }
     case "ask": {
       const options = parseCommandOptions(

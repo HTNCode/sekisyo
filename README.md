@@ -144,6 +144,7 @@ of `provider`.
 | Command                 | Purpose                                             |
 | ----------------------- | --------------------------------------------------- |
 | `sekisyo init`          | Install the pre-push hook and create `.sekisyo.yml` |
+| `sekisyo uninstall`     | Remove the Sekisyo pre-push hook from this repo     |
 | `sekisyo ask`           | Run the self-review and oral examination early      |
 | `sekisyo status`        | Show the current commit's gate state                |
 | `sekisyo pr`            | Create or update a PR with the Sekisyo record       |
@@ -151,12 +152,13 @@ of `provider`.
 | `sekisyo git <args...>` | Always pass arguments through to the real Git       |
 | `sekisyo <git args...>` | Pass unknown commands through to the real Git       |
 
-`init`, `ask`, `status`, `pr`, and `clean` accept `--help` and `--version` in
-any position, so `sekisyo status --help` prints the usage text and exits with 0.
-The internal `hook` subcommand is not covered: it accepts `--help` or `-h` only
-directly after `hook`, so that `sekisyo hook pre-push` can never be turned into
-a successful no-op that skips the gate. Arguments after `sekisyo git` and after
-an unknown Git command are always handed to the real Git untouched.
+`init`, `uninstall`, `ask`, `status`, `pr`, and `clean` accept `--help` and
+`--version` in any position, so `sekisyo status --help` prints the usage text
+and exits with 0. The internal `hook` subcommand is not covered: it accepts
+`--help` or `-h` only directly after `hook`, so that `sekisyo hook pre-push` can
+never be turned into a successful no-op that skips the gate. Arguments after
+`sekisyo git` and after an unknown Git command are always handed to the real Git
+untouched.
 
 The hook starts the interactive examination when a terminal is available. A push
 from an IDE or another non-interactive process fails safely and explains how to
@@ -253,6 +255,30 @@ the intended one-command entrypoint is:
 ```bash
 bunx sekisyo init
 ```
+
+### Per-repository adoption
+
+`bun link` only puts the `sekisyo` command on `PATH`; no repository is gated
+until you run `sekisyo init` inside it. To opt a repository out again, run
+`sekisyo uninstall`. It removes only a hook that Sekisyo installed and keeps
+`.sekisyo.yml`, which is shared team configuration.
+
+If `core.hooksPath` is set outside the repository (for example in
+`~/.gitconfig`), that directory is shared by every repository, so `sekisyo init`
+does not write there. It installs the hook in the repository's own `hooks`
+directory under `git rev-parse --git-common-dir` instead, which also covers
+linked worktrees, and prints a notice. Git does not run that hook on its own
+while the shared `core.hooksPath` is active, so the shared `pre-push` must hand
+over to it at the end:
+
+```sh
+hook="$(git rev-parse --git-common-dir)/hooks/pre-push"
+if [ -x "$hook" ]; then exec "$hook" "$@"; fi
+```
+
+If the shared hook reads standard input first, save it and pass the same content
+to the repository hook. A `core.hooksPath` set in the repository's own
+configuration (such as husky's `.husky`) is used as before.
 
 ## Supported platforms
 

@@ -5,3 +5,4 @@ export * from "./init.ts";
 export * from "./pr.ts";
 export * from "./runtime.ts";
 export * from "./status.ts";
+export * from "./uninstall.ts";
