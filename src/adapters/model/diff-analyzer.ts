@@ -78,6 +78,12 @@ export class ApiDiffAnalyzer implements DiffAnalyzer {
       throw client.createError("invalid_input");
     }
     const timer = this.#options.timer ?? noopPhaseTimer();
+    // timeoutMs は SDK では1回の要求ごとの上限で、再試行のたびに数え直される。
+    // CLI エンジンと同じく analysis.timeoutSeconds を解析全体の上限にするため、
+    // 再試行を含めた全体を1つの期限で打ち切る。
+    const deadline = AbortSignal.timeout(this.#options.timeoutMs);
+    const requestSignal =
+      signal === undefined ? deadline : AbortSignal.any([signal, deadline]);
     let response: StructuredOutputResult<
       z.output<typeof diffAnalysisWireSchema>
     >;
@@ -96,10 +102,14 @@ export class ApiDiffAnalyzer implements DiffAnalyzer {
             schemaName: "sekisyo_diff_analysis",
             timeoutMs: this.#options.timeoutMs
           },
-          signal
+          requestSignal
         )
       );
     } catch (error) {
+      // 期限切れは SDK からは「中断」に見えるため、ここでタイムアウトとして報告する。
+      if (deadline.aborted && signal?.aborted !== true) {
+        throw client.createError("timeout");
+      }
       throw client.classifyError(error);
     }
 

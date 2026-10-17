@@ -127,6 +127,37 @@ describe("ApiDiffAnalyzer", () => {
     });
   });
 
+  test("再試行を含めた解析全体をtimeoutMsで打ち切り、タイムアウトとして報告する", async () => {
+    class StalledClient extends FakeClient {
+      override async parse<Schema extends z.ZodType>(
+        _request: StructuredOutputRequest<Schema>,
+        signal?: AbortSignal
+      ): Promise<StructuredOutputResult<z.output<Schema>>> {
+        // 期限で打ち切られなかった場合も、テストが止まらず失敗するよう1秒で諦める。
+        return new Promise((_resolve, reject) => {
+          const fallback = setTimeout(
+            () => reject(new Error("deadline was not applied")),
+            1_000
+          );
+          signal?.addEventListener("abort", () => {
+            clearTimeout(fallback);
+            reject(new Error("aborted by signal"));
+          });
+        });
+      }
+    }
+    const analyzer = new ApiDiffAnalyzer(
+      async () => new StalledClient({ ...ok, candidate: wireAnalysis }),
+      { model: "analysis-model", timeoutMs: 30 }
+    );
+
+    const startedAt = performance.now();
+    await expect(analyzer.analyze(input)).rejects.toMatchObject({
+      code: "timeout"
+    });
+    expect(performance.now() - startedAt).toBeLessThan(500);
+  });
+
   test("空の差分は送らない", async () => {
     const client = new FakeClient({ ...ok, candidate: wireAnalysis });
     await expect(
