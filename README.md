@@ -419,13 +419,15 @@ and PR markers are editable, and `--no-verify` remains available by design.
 commands → application → domain + ports ← adapters
                                       ├─ Git / gh
                                       ├─ Codex CLI
-                                      ├─ OpenAI Responses API
+                                      ├─ OpenAI / Anthropic / Gemini /
+                                      │  OpenAI-compatible model APIs
                                       ├─ filesystem session store
                                       └─ terminal
 ```
 
 External systems are behind ports so the normal test suite uses fakes. Live
-Codex, OpenAI, and GitHub checks are performed separately as manual smoke tests.
+Codex, model-provider, and GitHub checks are performed separately as manual
+smoke tests.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development details and
 [SECURITY.md](SECURITY.md) for reporting security issues. The Japanese

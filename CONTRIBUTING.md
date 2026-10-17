@@ -32,7 +32,8 @@ credentials.
 - `src/domain`: pure types, policies, fingerprints, and state transitions
 - `src/ports`: external-system boundaries
 - `src/application`: use cases
-- `src/adapters`: Git, Codex, OpenAI, GitHub, filesystem, and terminal adapters
+- `src/adapters`: Git, Codex, model providers (OpenAI, Anthropic, Google,
+  OpenAI-compatible), GitHub, filesystem, and terminal adapters
 - `src/commands`: CLI commands
 - `test/unit`: pure and adapter tests with fakes
 - `test/integration`: temporary Git repository tests
