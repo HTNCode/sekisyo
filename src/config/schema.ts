@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { BUILT_IN_QUESTION_CATEGORIES } from "../domain/questions.ts";
 import {
   DEFAULT_REVIEW_STRICTNESS,
   REVIEW_STRICTNESS_LEVELS
@@ -80,7 +81,30 @@ const QuestionsConfigSchema = z
       .default([]),
     paths: z.record(safeTextSchema, PathQuestionOverridesSchema).default({})
   })
-  .strict();
+  .strict()
+  .superRefine((questions, context) => {
+    // Question routing tells built-in and custom categories apart by name, so a
+    // duplicate custom name would be counted twice as required, and a custom
+    // name equal to a built-in one would re-enable that built-in category.
+    const builtInNames = new Set<string>(BUILT_IN_QUESTION_CATEGORIES);
+    const seenNames = new Set<string>();
+    for (const [index, category] of questions.custom.entries()) {
+      if (builtInNames.has(category.name)) {
+        context.addIssue({
+          code: "custom",
+          message: `Custom question name "${category.name}" is reserved for a built-in category.`,
+          path: ["custom", index, "name"]
+        });
+      } else if (seenNames.has(category.name)) {
+        context.addIssue({
+          code: "custom",
+          message: `Custom question name "${category.name}" must be unique.`,
+          path: ["custom", index, "name"]
+        });
+      }
+      seenNames.add(category.name);
+    }
+  });
 
 const AnalysisConfigSchema = z
   .object({

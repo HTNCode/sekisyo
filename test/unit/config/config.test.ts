@@ -112,6 +112,55 @@ questions:
     ).toThrow();
   });
 
+  test("custom質問の同名を拒否する", () => {
+    expect(() =>
+      parseConfigYaml(`
+version: 1
+questions:
+  custom:
+    - name: ownership
+      prompt: Explain the owner.
+      required: true
+    - name: " ownership "
+      prompt: Explain the owner again.
+      required: true
+`)
+    ).toThrow(/ownership.*must be unique/);
+  });
+
+  test.each(["boundary", "ripple", "alternatives", "failure", "performance"])(
+    "custom質問の名前に組み込みカテゴリ名%sを使う設定を拒否する",
+    (name) => {
+      expect(() =>
+        parseConfig({
+          questions: {
+            categories: {
+              ...DEFAULT_CONFIG.questions.categories,
+              [name]: false
+            },
+            custom: [{ name, prompt: "Explain." }]
+          }
+        })
+      ).toThrow(new RegExp(`${name}.*is reserved for a built-in category`));
+    }
+  );
+
+  test("名前の検証を追加しても有効なcustom設定のpolicy digestは変わらない", () => {
+    const config = parseConfigYaml(`
+version: 1
+questions:
+  custom:
+    - name: ownership
+      prompt: Explain the owner.
+      required: true
+    - name: accessibility
+      prompt: Explain keyboard behavior.
+`);
+    expect(createPolicyDigest(config)).toBe(
+      "ef0236ce5795125352c83fd9af4ce654efc0b4b89788e2a21cb3ba1c7e414680"
+    );
+  });
+
   test("analysis.modelを受け付け、省略時はundefinedのままにする", () => {
     expect(
       parseConfigYaml(`

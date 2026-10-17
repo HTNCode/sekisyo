@@ -1,14 +1,7 @@
 import type { SekisyoConfig } from "../config/schema.ts";
 import type { DiffAnalysis } from "../domain/analysis.ts";
+import { BUILT_IN_QUESTION_CATEGORIES as BUILT_IN_CATEGORIES } from "../domain/questions.ts";
 import type { QuestionCategoryRequest } from "../ports/qa-model.ts";
-
-const BUILT_IN_CATEGORIES = [
-  "boundary",
-  "ripple",
-  "alternatives",
-  "failure",
-  "performance"
-] as const;
 
 type BuiltInCategory = (typeof BUILT_IN_CATEGORIES)[number];
 type CategorySetting = boolean | "required";
