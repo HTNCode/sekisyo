@@ -2,6 +2,7 @@ import {
   runAskCommand,
   runCleanCommand,
   runInitCommand,
+  runPreCommitHook,
   runPrePushHook,
   runPrCommand,
   runStatusCommand,
@@ -25,8 +26,9 @@ const HELP = `Sekisyo CLI — AI生成コードを説明責任つきでレビュ
 init / uninstall / ask / status / pr / clean では --help / --version を任意の位置で
 受け付けます。内部用の hook は対象外です。
 
-pre-pushフック内部:
+フック内部:
   sekisyo hook pre-push <remote> <url>
+  sekisyo hook pre-commit
 
 \`git push --no-verify\` によるバイパスはGitの公式仕様どおり利用できます。
 
@@ -240,6 +242,9 @@ export async function runCli(
       if (hookName !== undefined && HELP_OPTIONS.includes(hookName)) {
         console.log(HELP);
         return EXIT_CODE.success;
+      }
+      if (hookName === "pre-commit") {
+        return runPreCommitHook({ cwd });
       }
       if (hookName !== "pre-push") {
         throw new Error("対応していないhookです。");

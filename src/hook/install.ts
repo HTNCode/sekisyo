@@ -11,31 +11,58 @@ import { SEKISYO_VERSION } from "../version.ts";
 export const MANAGED_HOOK_MARKER = "# sekisyo-managed-hook:v1";
 export const HOOK_PACKAGE_VERSION = SEKISYO_VERSION;
 
-export function renderPrePushHook(): string {
-  return `#!/bin/sh
-${MANAGED_HOOK_MARKER}
+export type ManagedHookName = "pre-commit" | "pre-push";
 
-if [ "\${SEKISYO_PRE_PUSH_ACTIVE:-}" = "1" ]; then
-  echo "sekisyo: recursive pre-push invocation detected" >&2
-  exit 1
-fi
+// 再帰呼び出しの検出に使う環境変数。フックごとに分けないと、pre-commit の中で
+// 走った push などを誤って再帰と判定してしまう。
+const ACTIVE_VARIABLE: Readonly<Record<ManagedHookName, string>> = {
+  "pre-commit": "SEKISYO_PRE_COMMIT_ACTIVE",
+  "pre-push": "SEKISYO_PRE_PUSH_ACTIVE"
+};
 
-export SEKISYO_PRE_PUSH_ACTIVE=1
-
-if command -v sekisyo >/dev/null 2>&1; then
-  installed_version="$(sekisyo --version 2>/dev/null)"
-  if [ "$installed_version" = "sekisyo ${HOOK_PACKAGE_VERSION}" ]; then
-    exec sekisyo hook pre-push "$@"
-  fi
-fi
-
-if command -v bunx >/dev/null 2>&1; then
-  exec bunx --bun sekisyo@${HOOK_PACKAGE_VERSION} hook pre-push "$@"
+/**
+ * sekisyo を起動できなかったときの振る舞い。push は関所として止めるが、commit は
+ * 止めない。commit 時の試問は任意の前倒しで、push 時に必ず試問されるため。
+ */
+function missingCommandFallback(name: ManagedHookName): string {
+  if (name === "pre-commit") {
+    return `echo "sekisyo: version ${HOOK_PACKAGE_VERSION} が見つからないため、commit時の試問を省きました。push時に試問します。" >&2
+exit 0
+`;
+  }
+  return `if command -v bunx >/dev/null 2>&1; then
+  exec bunx --bun sekisyo@${HOOK_PACKAGE_VERSION} hook ${name} "$@"
 fi
 
 echo "sekisyo: version ${HOOK_PACKAGE_VERSION} is required; install it or make bunx available" >&2
 exit 1
 `;
+}
+
+export function renderManagedHook(name: ManagedHookName): string {
+  const active = ACTIVE_VARIABLE[name];
+  return `#!/bin/sh
+${MANAGED_HOOK_MARKER}
+
+if [ "\${${active}:-}" = "1" ]; then
+  echo "sekisyo: recursive ${name} invocation detected" >&2
+  exit 1
+fi
+
+export ${active}=1
+
+if command -v sekisyo >/dev/null 2>&1; then
+  installed_version="$(sekisyo --version 2>/dev/null)"
+  if [ "$installed_version" = "sekisyo ${HOOK_PACKAGE_VERSION}" ]; then
+    exec sekisyo hook ${name} "$@"
+  fi
+fi
+
+${missingCommandFallback(name)}`;
+}
+
+export function renderPrePushHook(): string {
+  return renderManagedHook("pre-push");
 }
 
 async function readExistingHook(path: string): Promise<string | undefined> {
@@ -113,28 +140,29 @@ function isManagedHook(content: string): boolean {
     .startsWith(`#!/bin/sh\n${MANAGED_HOOK_MARKER}\n`);
 }
 
-export async function resolvePrePushHookLocation(
-  cwd: string
+export async function resolveHookLocation(
+  cwd: string,
+  name: ManagedHookName
 ): Promise<PrePushHookLocation> {
   const repoRoot = await findRepositoryRoot(cwd);
   const setting = await readHooksPathSetting(repoRoot);
   if (setting === undefined) {
-    return { hookPath: await getGitPath(repoRoot, "hooks/pre-push") };
+    return { hookPath: await getGitPath(repoRoot, `hooks/${name}`) };
   }
 
   if (!REPOSITORY_OWNED_CONFIG_SCOPES.has(setting.scope)) {
     return {
-      hookPath: join(await getGitCommonDir(repoRoot), "hooks", "pre-push"),
+      hookPath: join(await getGitCommonDir(repoRoot), "hooks", name),
       sharedHooksPath: setting.value
     };
   }
 
-  const gitResolvedPath = await getGitPath(repoRoot, "hooks/pre-push");
+  const gitResolvedPath = await getGitPath(repoRoot, `hooks/${name}`);
   const expectedPath = join(
     isAbsolute(setting.value)
       ? setting.value
       : resolve(repoRoot, setting.value),
-    "pre-push"
+    name
   );
   return {
     hookPath:
@@ -144,17 +172,24 @@ export async function resolvePrePushHookLocation(
   };
 }
 
-export async function installPrePushHook(
-  repoRoot: string
+export async function resolvePrePushHookLocation(
+  cwd: string
 ): Promise<PrePushHookLocation> {
-  const location = await resolvePrePushHookLocation(repoRoot);
+  return resolveHookLocation(cwd, "pre-push");
+}
+
+export async function installManagedHook(
+  repoRoot: string,
+  name: ManagedHookName
+): Promise<PrePushHookLocation> {
+  const location = await resolveHookLocation(repoRoot, name);
   const { hookPath } = location;
   const existingHook = await readExistingHook(hookPath);
-  const renderedHook = renderPrePushHook();
+  const renderedHook = renderManagedHook(name);
 
   if (existingHook !== undefined && !isManagedHook(existingHook)) {
     throw new Error(
-      `Existing pre-push hook found at ${hookPath}. Sekisyo did not overwrite it.`
+      `Existing ${name} hook found at ${hookPath}. Sekisyo did not overwrite it.`
     );
   }
 
@@ -168,11 +203,18 @@ export async function installPrePushHook(
   return location;
 }
 
-/** Sekisyo が設置したフックだけを消し、利用者自身のフックには触れない。 */
-export async function uninstallPrePushHook(
+export async function installPrePushHook(
   repoRoot: string
+): Promise<PrePushHookLocation> {
+  return installManagedHook(repoRoot, "pre-push");
+}
+
+/** Sekisyo が設置したフックだけを消し、利用者自身のフックには触れない。 */
+export async function uninstallManagedHook(
+  repoRoot: string,
+  name: ManagedHookName
 ): Promise<{ readonly hookPath: string; readonly result: PrePushHookRemoval }> {
-  const { hookPath } = await resolvePrePushHookLocation(repoRoot);
+  const { hookPath } = await resolveHookLocation(repoRoot, name);
   const existingHook = await readExistingHook(hookPath);
   if (existingHook === undefined) {
     return { hookPath, result: "not_found" };
@@ -182,4 +224,10 @@ export async function uninstallPrePushHook(
   }
   await unlink(hookPath);
   return { hookPath, result: "removed" };
+}
+
+export async function uninstallPrePushHook(
+  repoRoot: string
+): Promise<{ readonly hookPath: string; readonly result: PrePushHookRemoval }> {
+  return uninstallManagedHook(repoRoot, "pre-push");
 }
