@@ -4,11 +4,11 @@ import type { ResponseStatus } from "openai/resources/responses/responses";
 import type { z } from "zod";
 
 import type { ModelPrompt } from "../../prompts/shared.ts";
+import type { ReasoningEffort } from "../model/structured-client.ts";
 
 // 送る側の値なので SDK が選択肢を増やしても壊れない。受ける側の
 // incompleteReason とはリスクの向きが逆なため、こちらは直書きのままとする
-export type OpenAIReasoningEffort =
-  "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+export type OpenAIReasoningEffort = ReasoningEffort;
 
 type ParsedResponse = Awaited<ReturnType<OpenAI["responses"]["parse"]>>;
 
