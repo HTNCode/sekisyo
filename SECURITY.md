@@ -21,14 +21,19 @@ whether an answer is true.
 
 ## Data handling
 
-Sekisyo sends repository-derived analysis to OpenAI. Configure exclusions for
+Sekisyo sends repository-derived analysis to the configured oral-examination
+provider (OpenAI by default, or Anthropic, Google, or an OpenAI-compatible
+endpoint). Endpoints and API keys for these providers are read only from the
+environment, never from the committed `.sekisyo.yml`. Configure exclusions for
 sensitive paths. A changed excluded path blocks analysis before its contents are
 read. Codex receives an isolated snapshot with Git metadata, symlinks,
 agent-control files, and excluded paths removed. Raw API keys and raw diffs must
 never be stored in local pass records or PR bodies.
 
-Child `git` and `gh` processes do not receive OpenAI environment variables
-(`OPENAI_API_KEY`, `OPENAI_BASE_URL`, and the organization and project
+Child `git` and `gh` processes do not receive model-provider environment
+variables (`OPENAI_API_KEY`, `OPENAI_ADMIN_KEY`, `OPENAI_BASE_URL`, the OpenAI
+organization and project variables, `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`,
+`GEMINI_API_KEY`, `GOOGLE_API_KEY`, and the `SEKISYO_OPENAI_COMPATIBLE_*`
 variables). This is a minimal denylist, not a full sanitizer: other secrets in
 the invoking shell, such as cloud or registry tokens, are still inherited. The
 `sekisyo git` passthrough also still hands the environment to Git unchanged;
