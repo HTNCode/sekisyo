@@ -1,4 +1,4 @@
-import { createCodexDiffAnalyzer } from "../adapters/codex/index.ts";
+import { createDiffAnalyzer } from "../adapters/analysis-engine.ts";
 import { AtomicJsonSessionStore } from "../adapters/filesystem/index.ts";
 import {
   createGitRepository,
@@ -31,6 +31,10 @@ import {
   resolvePhaseTimer,
   type PhaseTimer
 } from "../observability/timing.ts";
+import {
+  DEFAULT_ANALYSIS_ENGINE,
+  type AnalysisEngine
+} from "../domain/analysis-engine.ts";
 import type { ReviewStrictness } from "../domain/strictness.ts";
 import type {
   DiffAnalyzer,
@@ -69,7 +73,9 @@ export interface PrepareGateContextDependencies {
 
 export interface GateDependencyFactories {
   readonly createAnalyzer: (options: {
+    readonly engine: AnalysisEngine;
     readonly model?: string;
+    readonly qaModel: QaModelSelection;
     readonly strictness: ReviewStrictness;
     readonly timeoutMs: number;
     readonly timer: PhaseTimer;
@@ -91,7 +97,7 @@ const DEFAULT_CONTEXT_DEPENDENCIES: PrepareGateContextDependencies = {
 };
 
 const DEFAULT_GATE_FACTORIES: GateDependencyFactories = {
-  createAnalyzer: createCodexDiffAnalyzer,
+  createAnalyzer: createDiffAnalyzer,
   createModel: createQaModel
 };
 
@@ -232,9 +238,11 @@ export function createGateDependencies(
 ): GateDependencies {
   return {
     analyzer: factories.createAnalyzer({
+      engine: context.config.analysis.engine ?? DEFAULT_ANALYSIS_ENGINE,
       ...(context.config.analysis.model === undefined
         ? {}
         : { model: context.config.analysis.model }),
+      qaModel: selectQaModel(context.config),
       strictness: context.config.strictness,
       timeoutMs: context.config.analysis.timeoutSeconds * 1_000,
       timer

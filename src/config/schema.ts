@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { ANALYSIS_ENGINES } from "../domain/analysis-engine.ts";
 import { BUILT_IN_QUESTION_CATEGORIES } from "../domain/questions.ts";
 import {
   DEFAULT_MODEL_BY_PROVIDER,
@@ -19,9 +20,9 @@ const safeTextSchema = z
   .max(4_096)
   .refine((value) => !value.includes("\0"), "Value must not contain NUL.");
 
-// analysis.model becomes a Codex CLI argv value, so it is restricted to a plain
-// model identifier: no whitespace, control characters, or leading "-" that the
-// CLI would read as another flag.
+// analysis.model becomes a CLI argv value (Codex or Claude Code), so it is
+// restricted to a plain model identifier: no whitespace, control characters,
+// or leading "-" that the CLI would read as another flag.
 const modelNameSchema = z
   .string()
   .trim()
@@ -116,8 +117,13 @@ const AnalysisConfigSchema = z
   .object({
     maxChangedFiles: z.number().int().min(1).max(100_000).default(200),
     maxDiffBytes: z.number().int().min(1).max(100_000_000).default(1_000_000),
-    // Codex analysis model. Left optional so an existing .sekisyo.yml keeps its
-    // policy digest and the Codex CLI built-in default when the key is absent.
+    // Diff analysis engine. Optional with no default so an existing
+    // .sekisyo.yml keeps its policy digest; absent means codex.
+    engine: z.enum(ANALYSIS_ENGINES).optional(),
+    // Analysis model. For codex and claude-code it becomes the CLI's --model;
+    // for api it is the model name at the oral-examination provider, falling
+    // back to the top-level model. Left optional so an existing .sekisyo.yml
+    // keeps its policy digest and the engine's default when the key is absent.
     model: modelNameSchema.optional(),
     timeoutSeconds: z.number().int().min(1).max(3_600).default(180)
   })

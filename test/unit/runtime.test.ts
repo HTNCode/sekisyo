@@ -3,11 +3,16 @@ import { join } from "node:path";
 
 import {
   createGateDependencies,
+  type GateDependencyFactories,
   prepareGateContext,
   type PreparedGateContext,
   type PrepareGateContextDependencies
 } from "../../src/commands/runtime.ts";
-import { createPolicyDigest, DEFAULT_CONFIG } from "../../src/config/index.ts";
+import {
+  createPolicyDigest,
+  DEFAULT_CONFIG,
+  parseConfig
+} from "../../src/config/index.ts";
 import { createPhaseTimer } from "../../src/observability/timing.ts";
 import { fingerprint } from "../../src/domain/fingerprint.ts";
 import type { GateTarget } from "../../src/application/index.ts";
@@ -236,5 +241,31 @@ describe("createGateDependencies", () => {
   test("analysis.model未指定ならanalyzerにmodelキーを渡さない", () => {
     const options = analyzerOptionsFor(undefined);
     expect(Object.hasOwn(options, "model")).toBe(false);
+  });
+
+  test("engine未指定ならcodexを選び、apiエンジン用に口頭試問のproviderも渡す", () => {
+    const received: Parameters<GateDependencyFactories["createAnalyzer"]>[0][] =
+      [];
+    for (const config of [
+      DEFAULT_CONFIG,
+      parseConfig({ provider: "anthropic", analysis: { engine: "api" } })
+    ]) {
+      createGateDependencies(
+        { config, store: new EmptySessionStore(), target: gateTarget() },
+        undefined,
+        {
+          createAnalyzer: (options) => {
+            received.push(options);
+            return stubAnalyzer;
+          },
+          createModel: () => stubModel
+        }
+      );
+    }
+    expect(received.map((options) => options.engine)).toEqual(["codex", "api"]);
+    expect(received[1]?.qaModel).toEqual({
+      provider: "anthropic",
+      model: "claude-opus-5-5"
+    });
   });
 });
