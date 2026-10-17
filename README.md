@@ -158,13 +158,17 @@ analysis:
 `claude-code` needs Claude Code installed and signed in (a subscription login or
 `ANTHROPIC_API_KEY`). `--restricted` removes the command-running tools, confines
 file access to the snapshot, and ignores user, project, and local settings; a
-run with it did not load `~/.claude/CLAUDE.md`.
+run with it did not load `~/.claude/CLAUDE.md`. Besides the sign-in variables,
+only proxy settings (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, `NO_PROXY`) and
+`NODE_EXTRA_CA_CERTS` are forwarded, so it also works behind a proxy.
 
-`api` is the fastest and cheapest engine, but it sees only the diff: callers and
-other unchanged code are invisible to it, so its findings are shallower. It also
-sends the raw diff to the provider, whereas the CLI engines keep the diff on
-your machine and the oral-examination model receives only the structured
-analysis.
+`api` does not explore the repository, so it is usually quicker and uses fewer
+tokens, but it sees only the diff: callers and other unchanged code are
+invisible to it, so its findings are shallower. Every engine sends code to a
+model service: the CLI engines send the snapshot and diff to their own service
+(OpenAI for Codex, Anthropic for Claude Code), and the oral-examination model
+then receives only the structured analysis. With `api`, the raw diff goes to the
+oral-examination `provider` itself.
 
 `analysis.engine` is part of the policy digest, so switching engines invalidates
 existing pass records.
