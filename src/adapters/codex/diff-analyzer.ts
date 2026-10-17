@@ -10,7 +10,10 @@ import {
   DEFAULT_REVIEW_STRICTNESS,
   type ReviewStrictness
 } from "../../domain/strictness.ts";
-import type { ProcessRunner } from "../../ports/process-runner.ts";
+import type {
+  ProcessResult,
+  ProcessRunner
+} from "../../ports/process-runner.ts";
 import { createPrivacyPathMatcher } from "../../application/policy.ts";
 import { noopPhaseTimer, type PhaseTimer } from "../../observability/timing.ts";
 import {
@@ -20,7 +23,10 @@ import {
 import type { DiffAnalysis } from "../../domain/analysis.ts";
 import { BunProcessRunner } from "./bun-process-runner.ts";
 import {
+  AnalysisEngineError,
   CodexAdapterError,
+  type AnalysisEngineErrorOptions,
+  type CodexAdapterErrorCode,
   ProcessRunnerError,
   TemporaryOutputNotFoundError
 } from "./errors.ts";
@@ -248,31 +254,93 @@ function assertInput(input: DiffAnalysisInput): void {
   }
 }
 
-function buildArguments(
-  input: DiffAnalysisInput,
-  workspace: CodexTemporaryWorkspace,
-  options: ResolvedCodexDiffAnalyzerOptions
-): readonly string[] {
-  return [
-    options.executable,
-    "exec",
-    "--sandbox",
-    "read-only",
-    "--ephemeral",
-    "--ignore-user-config",
-    "--ignore-rules",
-    "--strict-config",
-    "--skip-git-repo-check",
-    "--json",
-    "--output-schema",
-    workspace.schemaPath,
-    "--output-last-message",
-    workspace.outputPath,
-    "--cd",
-    workspace.repositoryPath,
-    ...(options.model === undefined ? [] : ["--model", options.model]),
-    analysisPrompt(input, options.strictness)
-  ];
+/**
+ * 差分解析エンジンごとに異なる部分。スナップショットの準備、出力の検証、
+ * privacy パスの確認はエンジンに依らず CliDiffAnalyzer が行う。
+ */
+export interface AnalysisCliDriver {
+  /** エラーメッセージに出すエンジン名。 */
+  readonly engine: string;
+  /** 所要時間の計測に使うフェーズ名。 */
+  readonly phase: string;
+  buildArguments(request: AnalysisCliRequest): readonly string[];
+  environment(): Readonly<Record<string, string>>;
+  /** エンジンの標準出力と作業領域から、構造化出力の JSON 文字列を取り出す。 */
+  readOutput(
+    result: ProcessResult,
+    workspace: CodexTemporaryWorkspace
+  ): Promise<string>;
+  createError(
+    code: CodexAdapterErrorCode,
+    options?: AnalysisEngineErrorOptions
+  ): AnalysisEngineError;
+}
+
+export interface AnalysisCliRequest {
+  readonly prompt: string;
+  readonly schemaJson: string;
+  readonly workspace: CodexTemporaryWorkspace;
+}
+
+class CodexDriver implements AnalysisCliDriver {
+  readonly engine = "Codex";
+  readonly phase = CODEX_ANALYSIS_PHASE;
+  readonly #executable: string;
+  readonly #model: string | undefined;
+
+  constructor(executable: string, model: string | undefined) {
+    this.#executable = executable;
+    this.#model = model;
+  }
+
+  buildArguments({ prompt, workspace }: AnalysisCliRequest): readonly string[] {
+    return [
+      this.#executable,
+      "exec",
+      "--sandbox",
+      "read-only",
+      "--ephemeral",
+      "--ignore-user-config",
+      "--ignore-rules",
+      "--strict-config",
+      "--skip-git-repo-check",
+      "--json",
+      "--output-schema",
+      workspace.schemaPath,
+      "--output-last-message",
+      workspace.outputPath,
+      "--cd",
+      workspace.repositoryPath,
+      ...(this.#model === undefined ? [] : ["--model", this.#model]),
+      prompt
+    ];
+  }
+
+  environment(): Readonly<Record<string, string>> {
+    return createCodexEnvironment();
+  }
+
+  async readOutput(
+    result: ProcessResult,
+    workspace: CodexTemporaryWorkspace
+  ): Promise<string> {
+    validateEventStream(result.stdout);
+    try {
+      return await workspace.readOutput();
+    } catch (error) {
+      if (error instanceof TemporaryOutputNotFoundError) {
+        throw new CodexAdapterError("missing_output");
+      }
+      throw new CodexAdapterError("filesystem");
+    }
+  }
+
+  createError(
+    code: CodexAdapterErrorCode,
+    options?: AnalysisEngineErrorOptions
+  ): AnalysisEngineError {
+    return new CodexAdapterError(code, options);
+  }
 }
 
 function gitPreparationEnvironment(): Readonly<Record<string, string>> {
@@ -758,33 +826,80 @@ function assertAnalysisPrivacy(
   }
 }
 
-export class CodexDiffAnalyzer implements DiffAnalyzer {
-  readonly #options: ResolvedCodexDiffAnalyzerOptions;
+export interface CliDiffAnalyzerOptions {
+  readonly strictness?: ReviewStrictness;
+  readonly timeoutMs?: number;
+  readonly timer?: PhaseTimer;
+}
+
+interface ResolvedCliDiffAnalyzerOptions {
+  readonly strictness: ReviewStrictness;
+  readonly timeoutMs: number;
+  readonly timer: PhaseTimer;
+}
+
+export class CliDiffAnalyzer implements DiffAnalyzer {
+  readonly #driver: AnalysisCliDriver;
+  readonly #options: ResolvedCliDiffAnalyzerOptions;
   readonly #processRunner: ProcessRunner;
   readonly #workspaceFactory: CodexTemporaryWorkspaceFactory;
 
   constructor(
+    driver: AnalysisCliDriver,
     processRunner: ProcessRunner,
     workspaceFactory: CodexTemporaryWorkspaceFactory,
-    options: CodexDiffAnalyzerOptions = {}
+    options: CliDiffAnalyzerOptions = {}
   ) {
+    const timeoutMs = options.timeoutMs ?? DEFAULT_CODEX_TIMEOUT_MS;
+    if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+      throw driver.createError("invalid_input");
+    }
+    this.#driver = driver;
     this.#processRunner = processRunner;
     this.#workspaceFactory = workspaceFactory;
-    this.#options = resolveOptions(options);
+    this.#options = {
+      strictness: options.strictness ?? DEFAULT_REVIEW_STRICTNESS,
+      timeoutMs,
+      timer: options.timer ?? noopPhaseTimer()
+    };
   }
 
   async analyze(
     input: DiffAnalysisInput,
     signal?: AbortSignal
   ): Promise<DiffAnalysis> {
+    try {
+      return await this.#analyze(input, signal);
+    } catch (error) {
+      throw this.#relabel(error);
+    }
+  }
+
+  // 共通処理は CodexAdapterError を投げるため、実行中のエンジン名に付け替える。
+  #relabel(error: unknown): unknown {
+    if (
+      error instanceof AnalysisEngineError &&
+      error.engine !== this.#driver.engine
+    ) {
+      return this.#driver.createError(error.code, {
+        ...(error.exitCode === undefined ? {} : { exitCode: error.exitCode }),
+        retryable: error.retryable
+      });
+    }
+    return error;
+  }
+
+  async #analyze(
+    input: DiffAnalysisInput,
+    signal?: AbortSignal
+  ): Promise<DiffAnalysis> {
     assertInput(input);
     const deadlineMs = Date.now() + this.#options.timeoutMs;
+    const schemaJson = JSON.stringify(z.toJSONSchema(diffAnalysisWireSchema));
 
     let workspace: CodexTemporaryWorkspace;
     try {
-      workspace = await this.#workspaceFactory.create(
-        JSON.stringify(z.toJSONSchema(diffAnalysisWireSchema))
-      );
+      workspace = await this.#workspaceFactory.create(schemaJson);
     } catch {
       throw new CodexAdapterError("filesystem");
     }
@@ -803,14 +918,18 @@ export class CodexDiffAnalyzer implements DiffAnalyzer {
         )
       );
       const timeoutMs = remainingTimeoutMs(deadlineMs);
-      let result;
+      let result: ProcessResult;
       try {
-        result = await this.#options.timer.measure(CODEX_ANALYSIS_PHASE, () =>
+        result = await this.#options.timer.measure(this.#driver.phase, () =>
           this.#processRunner.run(
             {
-              argv: buildArguments(input, workspace, this.#options),
+              argv: this.#driver.buildArguments({
+                prompt: analysisPrompt(input, this.#options.strictness),
+                schemaJson,
+                workspace
+              }),
               cwd: workspace.repositoryPath,
-              env: createCodexEnvironment(),
+              env: this.#driver.environment(),
               timeoutMs
             },
             signal
@@ -834,18 +953,7 @@ export class CodexDiffAnalyzer implements DiffAnalyzer {
         });
       }
 
-      validateEventStream(result.stdout);
-
-      let output: string;
-      try {
-        output = await workspace.readOutput();
-      } catch (error) {
-        if (error instanceof TemporaryOutputNotFoundError) {
-          throw new CodexAdapterError("missing_output");
-        }
-        throw new CodexAdapterError("filesystem");
-      }
-      analysis = parseOutput(output);
+      analysis = parseOutput(await this.#driver.readOutput(result, workspace));
       assertAnalysisPrivacy(analysis, input.excludedPaths ?? []);
     } catch (error) {
       operationError = error;
@@ -864,6 +972,22 @@ export class CodexDiffAnalyzer implements DiffAnalyzer {
       throw new CodexAdapterError("unknown");
     }
     return analysis;
+  }
+}
+
+export class CodexDiffAnalyzer extends CliDiffAnalyzer {
+  constructor(
+    processRunner: ProcessRunner,
+    workspaceFactory: CodexTemporaryWorkspaceFactory,
+    options: CodexDiffAnalyzerOptions = {}
+  ) {
+    const resolved = resolveOptions(options);
+    super(
+      new CodexDriver(resolved.executable, resolved.model),
+      processRunner,
+      workspaceFactory,
+      resolved
+    );
   }
 }
 
