@@ -46,15 +46,16 @@ record check.
 ```text
 git push
    │
-   ├─ Codex inspects the committed diff and repository context
+   ├─ the analysis engine (Codex by default) inspects the committed diff
    ├─ mechanical findings are handled in a first self-review
-   ├─ GPT-5.6 asks 3–5 evidence-backed questions
+   ├─ the oral-examination model (GPT-5.6 by default) asks 3–5
+   │  evidence-backed questions
    ├─ vague answers receive a focused follow-up
    └─ a disposable pass record is stored under Git's private directory
 ```
 
 `git push` does not generate a PR summary. After an exact matching passed record
-has been selected, `sekisyo pr` asks GPT-5.6 to turn it into:
+has been selected, `sekisyo pr` asks the oral-examination model to turn it into:
 
 - design decisions;
 - risks and edge cases;
@@ -99,28 +100,30 @@ triggers:
 - `triggers` is not part of the policy digest, so turning it on or off keeps
   existing pass records valid. `sekisyo uninstall` removes both hooks.
 
-## How Sekisyo uses Codex and GPT-5.6
+## How Sekisyo analyzes and examines changes
 
-Sekisyo gives Codex and GPT-5.6 different responsibilities:
+Sekisyo splits the work between two roles. Each can be switched in
+`.sekisyo.yml`; with the default settings, Codex analyzes and GPT-5.6 examines.
 
-| Technology                               | How Sekisyo uses it                                                                                                                                                                                                                                                                                                            |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Codex CLI**                            | Runs headlessly at the pre-push gate to analyze the committed diff together with repository context. It returns structured findings, risks, and an attention map that classifies changed areas as mechanical, routine, or must-read.                                                                                           |
-| **GPT-5.6 via the OpenAI Responses API** | Uses the structured Codex analysis and the repository's question taxonomy to generate the oral examination, judge whether each answer is specific and verifiable, and ask a focused follow-up when an answer is vague. Only `sekisyo pr`, after selecting an exact matching passed record, summarizes the Q&A for the PR body. |
+| Role                 | Default                       | Switch with                                                       | What it does                                                                                                                                                                                                                                                                                                             |
+| -------------------- | ----------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Diff analysis**    | Codex CLI                     | `analysis.engine` (`codex`, `claude-code`, `api`)                 | Analyzes the committed diff, with repository context for the CLI engines. It returns structured findings, risks, and an attention map that classifies changed areas as mechanical, routine, or must-read.                                                                                                                |
+| **Oral examination** | GPT-5.6 via the Responses API | `provider` (`openai`, `anthropic`, `google`, `openai-compatible`) | Uses the structured analysis and the repository's question taxonomy to generate the oral examination, judge whether each answer is specific and verifiable, and ask a focused follow-up when an answer is vague. Only `sekisyo pr`, after selecting an exact matching passed record, summarizes the Q&A for the PR body. |
 
-Codex answers **“what changed, where should attention go, and what could go
-wrong?”** GPT-5.6 then asks **“can the author explain those decisions and
-risks?”** This separation keeps the product focused on developing the author:
-neither model is used to detect whether code or an answer was written by AI.
+The analysis answers **“what changed, where should attention go, and what could
+go wrong?”** The examination then asks **“can the author explain those decisions
+and risks?”** This separation keeps the product focused on developing the
+author: neither model is used to detect whether code or an answer was written by
+AI.
 
-GPT-5.6 calls use strict structured outputs and `store: false`. The local pass
-record stays under Git's private directory; after `sekisyo pr` transfers the
-explanation record to the pull request body, it is kept there as published until
-`sekisyo clean --all`.
+Every provider is called with strict structured output; with OpenAI, calls also
+use `store: false`. The local pass record stays under Git's private directory;
+after `sekisyo pr` transfers the explanation record to the pull request body, it
+is kept there as published until `sekisyo clean --all`.
 
-Each side takes its model from its own key in `.sekisyo.yml`. The top-level
-`model` selects the OpenAI model used for the oral examination, and
-`analysis.model` selects the model passed to the Codex CLI as `--model`:
+Each role takes its model from its own key in `.sekisyo.yml`. The top-level
+`model` selects the oral-examination model at the chosen `provider`, and
+`analysis.model` selects the analysis model. With the default engines:
 
 ```yaml
 model: gpt-5.6-sol # oral examination (OpenAI Responses API)
@@ -128,12 +131,12 @@ analysis:
   model: gpt-5.6-codex # diff analysis (Codex CLI)
 ```
 
-Omit `analysis.model` to use the Codex CLI's built-in default. Sekisyo always
-runs Codex with `--ignore-user-config`, so a model set in `~/.codex/config.toml`
-is not used; `analysis.model` is the only way to choose the analysis model. The
-value must be a plain model identifier that your Codex CLI accepts. Both keys
-are part of the policy digest, so changing either invalidates existing pass
-records.
+Omit `analysis.model` to use the engine's own default (for `api`, the top-level
+`model`). Sekisyo always runs Codex with `--ignore-user-config`, so a model set
+in `~/.codex/config.toml` is not used; `analysis.model` is the only way to
+choose the Codex model. For the CLI engines the value must be a plain model
+identifier that the CLI accepts. Both keys are part of the policy digest, so
+changing either invalidates existing pass records.
 
 ### Choosing the oral-examination provider
 
@@ -297,8 +300,10 @@ either way.
 - Bun 1.2 or newer;
 - Git;
 - a standard `tar` executable available on `PATH`;
-- [Codex CLI](https://developers.openai.com/codex/cli/) installed and
-  authenticated;
+- for the default `codex` analysis engine,
+  [Codex CLI](https://developers.openai.com/codex/cli/) installed and
+  authenticated (or Claude Code for `analysis.engine: claude-code`; nothing
+  extra for `api`);
 - credentials for the oral-examination provider available to the Sekisyo process
   (`OPENAI_API_KEY` by default; see
   [Choosing the oral-examination provider](#choosing-the-oral-examination-provider));
@@ -358,9 +363,10 @@ configuration (such as husky's `.husky`) is used as before. With
 | Invocation        | Interactive terminals; IDE and agent pushes fail safely until `sekisyo ask` has been completed |
 | Git object format | SHA-1 and SHA-256 repositories                                                                 |
 
-The CLI targets every platform on which Bun, Git, and Codex CLI are available.
-The CI workflow runs the automated suite on `ubuntu-latest`; Windows behavior is
-also covered by platform-specific code and local validation.
+The CLI targets every platform on which Bun, Git, and the chosen analysis CLI
+(Codex or Claude Code) are available. The CI workflow runs the automated suite
+on `ubuntu-latest`; Windows behavior is also covered by platform-specific code
+and local validation.
 
 ## Testing
 
@@ -377,9 +383,10 @@ bun run compile
 ```
 
 The automated suite uses fakes and temporary Git repositories, so it does not
-spend OpenAI credits or create GitHub pull requests. A manual end-to-end check
-requires authenticated Codex CLI, `OPENAI_API_KEY`, and—only for PR
-write-back—authenticated GitHub CLI.
+spend model-provider credits or create GitHub pull requests. A manual end-to-end
+check requires the chosen analysis engine (an authenticated Codex CLI by
+default), credentials for the chosen `provider` (`OPENAI_API_KEY` by default),
+and, only for PR write-back, an authenticated GitHub CLI.
 
 ## Question taxonomy
 
@@ -451,7 +458,7 @@ The overall review intensity is a single key in `.sekisyo.yml`:
 strictness: standard # light | standard | strict
 ```
 
-The level is applied in two places: the Codex analysis prompt (which issues are
+The level is applied in two places: the diff-analysis prompt (which issues are
 reported as findings) and the answer-judgment prompt (what an answer needs to
 pass the oral review and the self-review explanations).
 
@@ -480,18 +487,20 @@ pass records like any other policy change.
 
 - API keys and raw diffs are never written to pass records or PR bodies.
 - A diff touching a `privacy.exclude` path is stopped before its contents are
-  read. Codex receives only the exact HEAD tree—without repository history—in an
-  isolated snapshot with Git metadata, symlinks, agent-control files, and
-  excluded paths removed; the exact bounded diff is supplied separately as data.
-  Snapshot preparation archives only the requested commit—reading the source
-  object store read-only through a throwaway staging repository rather than
-  copying objects—and neutralizes `export-ignore` and `export-subst`, so tracked
-  files are neither omitted nor rewritten by archive policy. The staging
-  repository is deleted before the snapshot is extracted, so Codex never sees
-  it.
+  read. The CLI analysis engines (Codex and Claude Code) receive only the exact
+  tree being examined, without repository history, in an isolated snapshot with
+  Git metadata, symlinks, agent-control files, and excluded paths removed; the
+  exact bounded diff is supplied separately as data. Snapshot preparation
+  archives only the requested tree, reading the source object store read-only
+  through a throwaway staging repository rather than copying objects, and
+  neutralizes `export-ignore` and `export-subst`, so tracked files are neither
+  omitted nor rewritten by archive policy. The staging repository is deleted
+  before the snapshot is extracted, so the engine never sees it.
 - Child processes are launched with argument arrays, never a shell string.
-- Codex runs read-only and ephemerally.
-- The OpenAI key is not forwarded to the Codex child process.
+- Codex runs read-only and ephemerally; Claude Code runs with `--restricted`,
+  only read-only tools, and no session persistence.
+- Model-provider keys are not forwarded to the analysis CLIs, except the
+  variables Claude Code needs to sign in.
 - Recognizable credentials, raw HTML, and GitHub mentions are blocked or
   neutralized before Q&A and summaries are written to a PR.
 - Diff size and changed-file limits are configurable.
@@ -517,7 +526,8 @@ and PR markers are editable, and `--no-verify` remains available by design.
 ```text
 commands → application → domain + ports ← adapters
                                       ├─ Git / gh
-                                      ├─ Codex CLI
+                                      ├─ analysis engines: Codex CLI /
+                                      │  Claude Code CLI / model API
                                       ├─ OpenAI / Anthropic / Gemini /
                                       │  OpenAI-compatible model APIs
                                       ├─ filesystem session store
@@ -525,8 +535,8 @@ commands → application → domain + ports ← adapters
 ```
 
 External systems are behind ports so the normal test suite uses fakes. Live
-Codex, model-provider, and GitHub checks are performed separately as manual
-smoke tests.
+analysis-engine, model-provider, and GitHub checks are performed separately as
+manual smoke tests.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for development details and
 [SECURITY.md](SECURITY.md) for reporting security issues. The Japanese
