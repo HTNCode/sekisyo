@@ -55,6 +55,16 @@ export async function getGitPath(
   return result.stdout.trim();
 }
 
+/** worktree からでも全 worktree で共有される本体の Git ディレクトリを返す。 */
+export async function getGitCommonDir(repoRoot: string): Promise<string> {
+  const result = await runGit(repoRoot, [
+    "rev-parse",
+    "--path-format=absolute",
+    "--git-common-dir"
+  ]);
+  return result.stdout.trim();
+}
+
 export async function resolveCommit(
   repoRoot: string,
   reference: string

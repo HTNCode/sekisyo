@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -131,6 +131,51 @@ describe("runInitCommand", () => {
     expect(createCalls).toBe(0);
     expect(terminal.confirmCalls).toBe(0);
     expect(await Bun.file(join(repo, ".sekisyo.yml")).exists()).toBeTrue();
+  });
+
+  test("グローバルのhooksPathがあればリポジトリ側に設置し、委譲の案内を出す", async () => {
+    const home = await mkdtemp(join(tmpdir(), "sekisyo-global-"));
+    temporaryDirectories.push(home);
+    const sharedHooks = join(home, "git-hooks");
+    const globalConfig = join(home, "gitconfig");
+    await Bun.write(globalConfig, `[core]\n\thooksPath = ${sharedHooks}\n`);
+    const originalGlobalConfig = process.env.GIT_CONFIG_GLOBAL;
+    process.env.GIT_CONFIG_GLOBAL = globalConfig;
+    const logged: string[] = [];
+    const log = spyOn(console, "log").mockImplementation((message) => {
+      logged.push(String(message));
+    });
+    try {
+      const repo = await mkdtemp(join(tmpdir(), "sekisyo-init-"));
+      temporaryDirectories.push(repo);
+      const initialized = Bun.spawn(["git", "init", "-b", "main"], {
+        cwd: repo,
+        stdout: "ignore",
+        stderr: "ignore"
+      });
+      expect(await initialized.exited).toBe(0);
+
+      await expect(
+        runInitCommand(repo, { noAlias: true }, runtimeFor(undefined))
+      ).resolves.toBe(0);
+
+      expect(
+        await Bun.file(join(repo, ".git", "hooks", "pre-push")).exists()
+      ).toBeTrue();
+      expect(
+        await Bun.file(join(sharedHooks, "pre-push")).exists()
+      ).toBeFalse();
+      expect(logged.join("\n")).toContain(
+        `core.hooksPath=${sharedHooks} が有効です`
+      );
+    } finally {
+      log.mockRestore();
+      if (originalGlobalConfig === undefined) {
+        delete process.env.GIT_CONFIG_GLOBAL;
+      } else {
+        process.env.GIT_CONFIG_GLOBAL = originalGlobalConfig;
+      }
+    }
   });
 
   test("--no-aliasでも2回目の初期化は既存設定を保ったまま成功する", async () => {

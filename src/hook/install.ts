@@ -1,8 +1,9 @@
 import { chmod, mkdir, readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, normalize, resolve } from "node:path";
-import { runCommand } from "../adapters/git/command.ts";
+import { assertNotTimedOut, runCommand } from "../adapters/git/command.ts";
 import {
   findRepositoryRoot,
+  getGitCommonDir,
   getGitPath
 } from "../adapters/git/git-repository.ts";
 import { SEKISYO_VERSION } from "../version.ts";
@@ -53,39 +54,103 @@ function comparablePath(path: string): string {
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
-async function resolvePrePushHookPath(cwd: string): Promise<string> {
-  const repoRoot = await findRepositoryRoot(cwd);
-  const gitResolvedPath = await getGitPath(repoRoot, "hooks/pre-push");
-  const configured = await runCommand(
-    ["git", "config", "--path", "--get", "core.hooksPath"],
-    { cwd: repoRoot, timeoutMs: 30_000 }
-  );
-  if (configured.exitCode !== 0 || configured.stdout.trim().length === 0) {
-    return gitResolvedPath;
-  }
+// local / worktree 以外（global / system / command）の core.hooksPath は他の
+// リポジトリと共有されるため、そこへ書くと全リポジトリに関所が掛かってしまう。
+const REPOSITORY_OWNED_CONFIG_SCOPES: ReadonlySet<string> = new Set([
+  "local",
+  "worktree"
+]);
 
-  const configuredRoot = configured.stdout.trim();
-  const expectedPath = join(
-    isAbsolute(configuredRoot)
-      ? configuredRoot
-      : resolve(repoRoot, configuredRoot),
-    "pre-push"
-  );
-  return comparablePath(gitResolvedPath) === comparablePath(expectedPath)
-    ? gitResolvedPath
-    : expectedPath;
+interface HooksPathSetting {
+  readonly scope: string;
+  readonly value: string;
 }
 
-export async function installPrePushHook(repoRoot: string): Promise<string> {
-  const hookPath = await resolvePrePushHookPath(repoRoot);
+export interface PrePushHookLocation {
+  readonly hookPath: string;
+  /**
+   * リポジトリ外で設定された core.hooksPath。設定されている場合、Git は
+   * hookPath を直接呼ばないため、共有フック側からの委譲が必要になる。
+   */
+  readonly sharedHooksPath?: string;
+}
+
+async function readHooksPathSetting(
+  repoRoot: string
+): Promise<HooksPathSetting | undefined> {
+  const command = [
+    "git",
+    "config",
+    "--show-scope",
+    "--path",
+    "--get",
+    "core.hooksPath"
+  ];
+  const result = await runCommand(command, {
+    cwd: repoRoot,
+    timeoutMs: 30_000
+  });
+  assertNotTimedOut(command, result, 30_000);
+  const line = result.stdout.trim();
+  if (result.exitCode !== 0 || line.length === 0) {
+    return undefined;
+  }
+  const separator = line.indexOf("\t");
+  if (separator < 0) {
+    throw new Error("git config --show-scope returned an unexpected format.");
+  }
+  return {
+    scope: line.slice(0, separator),
+    value: line.slice(separator + 1)
+  };
+}
+
+function isManagedHook(content: string): boolean {
+  return content
+    .replaceAll("\r\n", "\n")
+    .startsWith(`#!/bin/sh\n${MANAGED_HOOK_MARKER}\n`);
+}
+
+export async function resolvePrePushHookLocation(
+  cwd: string
+): Promise<PrePushHookLocation> {
+  const repoRoot = await findRepositoryRoot(cwd);
+  const setting = await readHooksPathSetting(repoRoot);
+  if (setting === undefined) {
+    return { hookPath: await getGitPath(repoRoot, "hooks/pre-push") };
+  }
+
+  if (!REPOSITORY_OWNED_CONFIG_SCOPES.has(setting.scope)) {
+    return {
+      hookPath: join(await getGitCommonDir(repoRoot), "hooks", "pre-push"),
+      sharedHooksPath: setting.value
+    };
+  }
+
+  const gitResolvedPath = await getGitPath(repoRoot, "hooks/pre-push");
+  const expectedPath = join(
+    isAbsolute(setting.value)
+      ? setting.value
+      : resolve(repoRoot, setting.value),
+    "pre-push"
+  );
+  return {
+    hookPath:
+      comparablePath(gitResolvedPath) === comparablePath(expectedPath)
+        ? gitResolvedPath
+        : expectedPath
+  };
+}
+
+export async function installPrePushHook(
+  repoRoot: string
+): Promise<PrePushHookLocation> {
+  const location = await resolvePrePushHookLocation(repoRoot);
+  const { hookPath } = location;
   const existingHook = await readExistingHook(hookPath);
   const renderedHook = renderPrePushHook();
 
-  const managedPrefix = `#!/bin/sh\n${MANAGED_HOOK_MARKER}\n`;
-  if (
-    existingHook !== undefined &&
-    !existingHook.replaceAll("\r\n", "\n").startsWith(managedPrefix)
-  ) {
+  if (existingHook !== undefined && !isManagedHook(existingHook)) {
     throw new Error(
       `Existing pre-push hook found at ${hookPath}. Sekisyo did not overwrite it.`
     );
@@ -98,5 +163,5 @@ export async function installPrePushHook(repoRoot: string): Promise<string> {
   if (process.platform !== "win32") {
     await chmod(hookPath, 0o755);
   }
-  return hookPath;
+  return location;
 }
