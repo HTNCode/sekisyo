@@ -111,7 +111,33 @@ const QuestionsConfigSchema = z
       }
       seenNames.add(category.name);
     }
+
+    // Required built-in categories and required custom entries do not depend on
+    // the changed files, so an excess is rejected here, before the diff
+    // analysis runs. paths overrides can add more and are checked at run time.
+    const requiredCount = countStaticRequiredCategories(questions);
+    if (requiredCount > questions.count) {
+      context.addIssue({
+        code: "custom",
+        message: `必須質問カテゴリが${requiredCount}件あります。questions.countを${requiredCount}以上にしてください。`,
+        path: ["count"]
+      });
+    }
   });
+
+/**
+ * questions.paths の上書きを除いた、変更ファイルに依存しない必須カテゴリ数。
+ */
+export function countStaticRequiredCategories(questions: {
+  readonly categories: Readonly<Record<string, boolean | "required">>;
+  readonly custom: readonly { readonly required?: boolean | undefined }[];
+}): number {
+  return (
+    Object.values(questions.categories).filter(
+      (setting) => setting === "required"
+    ).length + questions.custom.filter((category) => category.required).length
+  );
+}
 
 const AnalysisConfigSchema = z
   .object({

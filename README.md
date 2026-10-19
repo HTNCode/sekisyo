@@ -429,9 +429,13 @@ A `custom` entry is optional by default. Add `required: true` to it when the
 question must always be asked. Keep `questions.count` at least as large as the
 number of built-in categories that are `required` once any matching `paths`
 override has been applied, plus the number of `custom` entries marked
-`required`. Because `paths` overrides depend on which files changed, the count
-is checked at run time: the gate aborts after the diff analysis, not when the
-config is loaded.
+`required`. The count is checked in two steps. Built-in categories set to
+`required` under `categories` and `custom` entries marked `required` do not
+depend on the changed files, so a config where they alone exceed
+`questions.count` is rejected when it is loaded, before the diff analysis runs.
+Because `paths` overrides depend on which files changed, any excess they add is
+checked at run time: the gate aborts after the diff analysis, and the error says
+that a matching `paths` override contributed to the count.
 
 Generated questions carry a fixed category set, so every custom question is
 reported as `custom`. Sekisyo can therefore verify that at least as many custom
