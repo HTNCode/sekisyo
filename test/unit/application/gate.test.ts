@@ -731,7 +731,44 @@ describe("runGate", () => {
         },
         target()
       )
-    ).rejects.toThrow("必須質問カテゴリが2件あります");
+    ).rejects.toThrow(
+      /^必須質問カテゴリが2件あります。questions\.countを2以上にしてください。$/
+    );
+  });
+
+  test("paths上書きで必須数がquestions.countを超えたときはpaths由来と分かる文言で差分分析後に中断する", async () => {
+    const store = new MemorySessionStore();
+    const analyzer = new StaticAnalyzer();
+
+    const result = runGate(
+      {
+        analyzer,
+        clock: () => "2026-07-18T12:00:00.000Z",
+        model: new ScriptedModel(),
+        store,
+        terminal: new ScriptedTerminal([], [])
+      },
+      {
+        ...DEFAULT_CONFIG,
+        questions: {
+          ...DEFAULT_CONFIG.questions,
+          categories: {
+            ...DEFAULT_CONFIG.questions.categories,
+            boundary: "required"
+          },
+          count: 1,
+          paths: {
+            "src/**": { categories: { failure: "required" } }
+          }
+        }
+      },
+      target()
+    );
+
+    await expect(result).rejects.toThrow(
+      "必須質問カテゴリが2件あります。questions.countを2以上にしてください。（変更ファイルに一致したquestions.pathsの上書きで必須になったカテゴリを含みます）"
+    );
+    expect(analyzer.calls).toBe(1);
   });
 
   test("required指定のcustom質問はcustom質問の生成で満たされpassedになる", async () => {

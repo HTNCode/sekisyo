@@ -1,5 +1,8 @@
 import { configQaModelDescriptor } from "../config/model.ts";
-import type { SekisyoConfig } from "../config/schema.ts";
+import {
+  countStaticRequiredCategories,
+  type SekisyoConfig
+} from "../config/schema.ts";
 import type { ReviewFinding } from "../domain/analysis.ts";
 import {
   BUILT_IN_QUESTION_CATEGORIES,
@@ -635,8 +638,14 @@ async function runGateSession(
     (category) => category.required
   ).length;
   if (requiredCount > config.questions.count) {
+    // The config loader already rejects an excess from categories and custom
+    // alone, so a remaining excess comes from a matching paths override.
+    const pathsNote =
+      countStaticRequiredCategories(config.questions) <= config.questions.count
+        ? "（変更ファイルに一致したquestions.pathsの上書きで必須になったカテゴリを含みます）"
+        : "";
     throw new Error(
-      `必須質問カテゴリが${requiredCount}件あります。questions.countを${requiredCount}以上にしてください。`
+      `必須質問カテゴリが${requiredCount}件あります。questions.countを${requiredCount}以上にしてください。${pathsNote}`
     );
   }
   const questionGenerationController = new AbortController();

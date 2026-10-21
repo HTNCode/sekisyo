@@ -161,6 +161,83 @@ questions:
     );
   });
 
+  test("required指定の組み込みカテゴリとcustom質問の合計がquestions.countを超える設定を読み込み時に拒否する", () => {
+    expect(() =>
+      parseConfigYaml(`
+version: 1
+questions:
+  count: 2
+  categories:
+    boundary: required
+    ripple: required
+    alternatives: false
+    failure: false
+    performance: false
+  custom:
+    - name: ownership
+      prompt: Explain the owner.
+      required: true
+`)
+    ).toThrow(
+      "必須質問カテゴリが3件あります。questions.countを3以上にしてください。"
+    );
+  });
+
+  test("required指定のcustom質問だけでquestions.countを超える設定も読み込み時に拒否する", () => {
+    expect(() =>
+      parseConfig({
+        questions: {
+          count: 1,
+          custom: [
+            { name: "ownership", prompt: "Explain.", required: true },
+            { name: "rollback", prompt: "Explain.", required: true }
+          ]
+        }
+      })
+    ).toThrow("必須質問カテゴリが2件あります");
+  });
+
+  test("必須数がquestions.countとちょうど等しい設定は受け付ける", () => {
+    const config = parseConfig({
+      questions: {
+        count: 2,
+        categories: {
+          boundary: "required",
+          ripple: true,
+          alternatives: true,
+          failure: true,
+          performance: false
+        },
+        custom: [
+          { name: "ownership", prompt: "Explain.", required: true },
+          { name: "accessibility", prompt: "Explain." }
+        ]
+      }
+    });
+    expect(config.questions.count).toBe(2);
+  });
+
+  test("questions.pathsの上書き由来でしか超えない設定は読み込み時には拒否しない", () => {
+    const config = parseConfig({
+      questions: {
+        count: 1,
+        categories: {
+          boundary: "required",
+          ripple: true,
+          alternatives: true,
+          failure: true,
+          performance: false
+        },
+        paths: {
+          "src/billing/**": { categories: { failure: "required" } }
+        }
+      }
+    });
+    expect(config.questions.paths["src/billing/**"]?.categories.failure).toBe(
+      "required"
+    );
+  });
+
   test("analysis.modelを受け付け、省略時はundefinedのままにする", () => {
     expect(
       parseConfigYaml(`
