@@ -55,7 +55,6 @@ class FakeResponsesClient implements OpenAIResponsesClient {
     });
     return {
       failed: this.#options.failed ?? false,
-      incompleteReason: null,
       parsed: candidate === null ? null : request.schema.parse(candidate),
       refused: this.#options.refused ?? false,
       status: this.#options.status

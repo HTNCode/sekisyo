@@ -6,17 +6,10 @@ import type { z } from "zod";
 import type { ModelPrompt } from "../../prompts/shared.ts";
 import type { ReasoningEffort } from "../model/structured-client.ts";
 
-// 送る側の値なので SDK が選択肢を増やしても壊れない。受ける側の
-// incompleteReason とはリスクの向きが逆なため、こちらは直書きのままとする
+// 送る側の値なので SDK が選択肢を増やしても壊れない。SDK から導出せず直書きのままとする
 export type OpenAIReasoningEffort = ReasoningEffort;
 
 type ParsedResponse = Awaited<ReturnType<OpenAI["responses"]["parse"]>>;
-
-// SDK のマイナー更新で reason が増減しても追随できるよう、リテラルを直書き
-// せず incomplete_details から導出する
-export type OpenAIIncompleteReason = NonNullable<
-  NonNullable<ParsedResponse["incomplete_details"]>["reason"]
->;
 
 export interface StructuredResponseRequest<Schema extends z.ZodType> {
   readonly maxOutputTokens: number;
@@ -30,7 +23,6 @@ export interface StructuredResponseRequest<Schema extends z.ZodType> {
 
 export interface StructuredResponse<Output> {
   readonly failed: boolean;
-  readonly incompleteReason: OpenAIIncompleteReason | null;
   readonly parsed: Output | null;
   readonly refused: boolean;
   readonly status: ResponseStatus | undefined;
@@ -82,7 +74,6 @@ export class OpenAISdkResponsesClient implements OpenAIResponsesClient {
 
     return {
       failed: response.error !== null || response.status === "failed",
-      incompleteReason: response.incomplete_details?.reason ?? null,
       // openai 7.x の InferZodType は構造的推論のため、ジェネリックな
       // Schema では z.output<Schema> との同一性を TS が証明できない
       parsed: response.output_parsed as z.output<Schema> | null,
