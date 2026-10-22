@@ -11,11 +11,11 @@ import {
 type SdkResponse = ParsedResponse<unknown>;
 type SdkOutputItem = SdkResponse["output"][number];
 
-// 実装が読むのはこの5項目だけ。SDK の型から取るので、項目名や値の型が
+// 実装が読むのはこの4項目だけ。SDK の型から取るので、項目名や値の型が
 // 変わればここで typecheck が落ちる
 type ReadFields = Pick<
   SdkResponse,
-  "error" | "incomplete_details" | "output" | "output_parsed" | "status"
+  "error" | "output" | "output_parsed" | "status"
 >;
 
 interface ParseCall {
@@ -38,7 +38,6 @@ const request: StructuredResponseRequest<typeof schema> = {
 function sdkResponse(fields: Partial<ReadFields> = {}): SdkResponse {
   const base: ReadFields = {
     error: null,
-    incomplete_details: null,
     output: [],
     output_parsed: null,
     status: "completed"
@@ -108,7 +107,6 @@ describe("OpenAISdkResponsesClient のレスポンス変換", () => {
 
     expect(result).toEqual({
       failed: false,
-      incompleteReason: null,
       parsed: { answer: "回答" },
       refused: false,
       status: "completed"
@@ -122,35 +120,6 @@ describe("OpenAISdkResponsesClient のレスポンス変換", () => {
 
     expect(result.parsed).toBeNull();
     expect(result.status).toBe("incomplete");
-  });
-
-  test("incomplete_details.reason を incompleteReason に写す", async () => {
-    const { client } = createClient(
-      sdkResponse({
-        incomplete_details: { reason: "max_output_tokens" },
-        status: "incomplete"
-      })
-    );
-
-    const result = await client.parse(request);
-
-    expect(result.incompleteReason).toBe("max_output_tokens");
-  });
-
-  test("incomplete_details が null なら incompleteReason は null", async () => {
-    const { client } = createClient(sdkResponse({ incomplete_details: null }));
-
-    const result = await client.parse(request);
-
-    expect(result.incompleteReason).toBeNull();
-  });
-
-  test("reason が undefined なら incompleteReason は null", async () => {
-    const { client } = createClient(sdkResponse({ incomplete_details: {} }));
-
-    const result = await client.parse(request);
-
-    expect(result.incompleteReason).toBeNull();
   });
 
   test("error があれば status が completed でも failed", async () => {
