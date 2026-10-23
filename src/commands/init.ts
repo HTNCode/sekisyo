@@ -7,7 +7,7 @@ import {
   SEKISYO_CONFIG_TEMPLATE
 } from "../config/parse.ts";
 import { installManagedHook, type ManagedHookName } from "../hook/install.ts";
-import { TerminalInputClosedError } from "../ports/terminal.ts";
+import { TerminalInputClosedError, type Terminal } from "../ports/terminal.ts";
 
 function aliasInstructions(): string {
   if (process.platform === "win32") {
@@ -57,9 +57,8 @@ export interface InitOptions {
   readonly noAlias?: boolean;
 }
 
-interface InitTerminal {
-  write(message: string): void;
-  confirm(message: string): Promise<boolean>;
+/** 使うメソッドだけを ports の Terminal から取り出し、テストダブルを小さく保つ。 */
+interface InitTerminal extends Pick<Terminal, "write" | "confirm"> {
   close(): void | Promise<void>;
 }
 

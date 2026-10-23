@@ -233,6 +233,28 @@ The hook starts the interactive examination when a terminal is available. A push
 from an IDE or another non-interactive process fails safely and explains how to
 complete `sekisyo ask` first.
 
+### Non-interactive input and EOF
+
+Sekisyo reads answers from the terminal itself. When standard input and output
+are not both a terminal, it opens the controlling terminal (`/dev/tty`, or
+`CONIN$` on Windows) instead, so answers piped into standard input are never
+read.
+
+`sekisyo ask`, the pre-push hook, and `sekisyo clean` fail closed. When no
+terminal is available, or the terminal input ends (for example with Ctrl+D)
+before an answer arrives, they stop without passing the gate or deleting
+anything and exit with 3. The message names the next step: `sekisyo ask` and the
+pre-push hook ask you to rerun `sekisyo ask` in an interactive terminal, and
+`sekisyo clean` asks for `sekisyo clean --force`. A partly typed answer that is
+not followed by Enter before the input ends is discarded, so it counts as no
+answer.
+
+Two commands behave differently. `sekisyo init` treats an unanswered wrapper
+question as "no" and still exits with 0, because setup is already complete; use
+`--show-alias` or `--no-alias` to skip the question. The pre-commit hook lets a
+commit through with a notice when there is no terminal, as described above, and
+exits with 3 only when the input ends during the examination.
+
 ### Optional Git wrapper
 
 `sekisyo init` can show an opt-in shell wrapper. This is only a convenience
